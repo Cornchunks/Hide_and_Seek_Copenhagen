@@ -39,6 +39,8 @@
   .zl{width:34px;height:22px;border-radius:11px;background:#000b;color:#fff;font:700 13px/22px system-ui;text-align:center}.zl.sel{background:var(--go)}
   .locbtn{width:42px;padding:0;justify-content:center}
   #toast{left:8px;right:8px;top:calc(110px + env(safe-area-inset-top,0px));max-width:440px;background:var(--ink);color:#fff;border-radius:10px;padding:8px 12px;font-size:14px;display:none;pointer-events:none}
+  .stad{position:relative;width:30px;height:30px}.stad i{display:flex;align-items:center;justify-content:center;width:30px;height:30px;box-sizing:border-box;border-radius:50%;background:#fff;border:2px solid var(--stad);font-style:normal;font-size:16px;box-shadow:0 1px 5px #0005}
+  .stad b{position:absolute;left:34px;top:5px;white-space:nowrap;background:var(--panel);border-radius:6px;padding:1px 6px;font:600 12px system-ui;box-shadow:0 1px 3px #0003}.stad.sel i{background:var(--stad)}
   h4{margin:0;display:flex;justify-content:space-between;align-items:center}
 </style>
 </head>
@@ -55,7 +57,7 @@
   </div>
   <div style="position:relative">
     <button class="btn" id="matchBtn">🔗 Matching ▾</button>
-    <div class="menu" id="matchMenu"><button data-m="line">🚆 Train line</button><button data-m="zone">🎫 Fare zone</button></div>
+    <div class="menu" id="matchMenu"><button data-m="line">🚆 Train line</button><button data-m="zone">🎫 Fare zone</button><button data-m="stadium">⚽ Football</button></div>
   </div>
   <button class="btn" id="fxBtn">Effects (<span id="fxN">0</span>)</button>
   <button class="btn" id="cfgBtn" aria-label="Settings">⚙</button>
@@ -66,6 +68,7 @@
 <div id="place" class="ui sheet">
   <b id="placeT">Radar</b>
   <div class="muted" id="placeH"></div>
+  <div class="acts" id="locRow" style="display:none;margin:8px 0"><button class="btn" id="useLoc">📍 Use my location</button></div>
   <div class="chips" id="lineSel"></div>
   <div class="seg" id="elim"></div>
   <div class="acts"><button class="btn" id="cancel">Cancel</button><button class="btn go" id="confirm" disabled>Confirm</button></div>
@@ -215,6 +218,15 @@ C/H|111,110,109,108,1,2,104,105,75,74,73,34,72,7,24,42,87,88,89,90,91
 F|41,76,77,107,106,2,103,102,100,101,95,88
 L|44,45,46,47,49,48,50,51,52,53,54,55,56,111,57,58,59,60,61,62,63,64,65,66,67,70,71,68,69
 `;
+// name|lat|lng, from Jet Lag - Football Stadiums.csv
+const STADIUMS_DATA = `
+Parken Stadion|55.70281|12.57235
+Brøndby Stadion|55.64910|12.41757
+Gentofte Sportspark|55.75732|12.52591
+Gladsaxe Stadium|55.73287|12.49677
+Hvidovre Stadion|55.63129|12.48284
+Vanløse Idrætspark|55.68630|12.47690
+`;
 // ---- COLOURS: change these to restyle the app ----
 const COLORS = {
   area:      '#f97316',  // play area shading (stations still in play)
@@ -234,6 +246,7 @@ const COLORS = {
     33: '#84cc16', 40: '#ec4899', 41: '#14b8a6', 43: '#8b5cf6', 44: '#f43f5e', 51: '#0ea5e9', 55: '#a3a3a3'
   },
   zoneBorder: '#1f2937',   // lines between fare zones
+  stadium:   '#e11d48',  // football stadium markers and the highlighted stations
   me:        '#2563eb',  // your location dot and accuracy circle
   ink:       '#1d2b2a',  // text, selected buttons and toggles
   go:        '#c2410c',  // Confirm button
@@ -258,8 +271,12 @@ const LINE_DIM_OPACITY = 0.2;              // opacity of the other lines while o
 
 for (const k of ['ink', 'go', 'panel', 'muted']) document.documentElement.style.setProperty('--' + k, COLORS[k]);
 document.documentElement.style.setProperty('--pin', COLORS.thermoPin);
+document.documentElement.style.setProperty('--stad', COLORS.stadium);
 
 const ST = DATA.trim().split('\n').map((l, i) => { const [name, a, o, zone] = l.split('|'); return {i, name, zone, lat: +a, lng: +o, ll: L.latLng(+a, +o)}; });
+const STAD = STADIUMS_DATA.trim().split('\n').map(l => { const [name, a, o] = l.split('|'); return {name, ll: L.latLng(+a, +o)}; });
+const STAD_I = Object.fromEntries(STAD.map((x, i) => [x.name, i]));
+for (const s of ST) s.stad = STAD.reduce((b, x, i) => s.ll.distanceTo(x.ll) < s.ll.distanceTo(STAD[b].ll) ? i : b, 0);   // each station's closest stadium
 const LINES = {}, LINE_SET = {};
 for (const l of LINES_DATA.trim().split('\n')) { const [id, idx] = l.split('|'); LINES[id] = idx.split(',').map(n => ST[n - 1].ll); LINE_SET[id] = new Set(idx.split(',').map(n => n - 1)); }
 const $ = id => document.getElementById(id);
@@ -268,7 +285,7 @@ const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } cat
 
 const OLD_LINES = {A: 'A/E', B: 'B/Bx', C: 'C/H'};   // saved effects from before the express lines were merged
 let hideR = load('hs3_hr', 0.5), effects = load('hs3_fx', []), pending = null, pins = {}, showLines = SHOW_LINES_DEFAULT, showZones = SHOW_ZONES_DEFAULT, zoneGeo = null, zoneKey = '';
-effects = effects.map(e => e.type === 'line' && OLD_LINES[e.line] ? {...e, line: OLD_LINES[e.line]} : e).filter(e => e.type !== 'line' || LINE_SET[e.line]);
+effects = effects.map(e => e.type === 'line' && OLD_LINES[e.line] ? {...e, line: OLD_LINES[e.line]} : e).filter(e => (e.type !== 'line' || LINE_SET[e.line]) && (e.type !== 'stadium' || e.stadium in STAD_I));
 
 // ---- map ----
 const map = L.map('map', {zoomControl: false, preferCanvas: true}).setView([55.69, 12.5], 11);
@@ -294,7 +311,7 @@ useBase(0);
 map.createPane('area').style.opacity = 0.3;
 map.getPane('area').style.zIndex = 300;
 map.createPane('zones').style.zIndex = 310;
-const gArea = L.layerGroup().addTo(map), gLines = L.layerGroup().addTo(map), gZones = L.layerGroup().addTo(map), gFx = L.layerGroup().addTo(map), gDots = L.layerGroup().addTo(map), gPins = L.layerGroup().addTo(map), gMe = L.layerGroup().addTo(map);
+const gArea = L.layerGroup().addTo(map), gLines = L.layerGroup().addTo(map), gZones = L.layerGroup().addTo(map), gFx = L.layerGroup().addTo(map), gDots = L.layerGroup().addTo(map), gPins = L.layerGroup().addTo(map), gMe = L.layerGroup().addTo(map), gStad = L.layerGroup().addTo(map);
 
 // ---- fare zones: every point belongs to the zone of its nearest station ----
 // Each station's cell is a circle (ZONE_REACH_KM) trimmed by the halfway line to every neighbour, built once when first needed.
@@ -358,10 +375,12 @@ function drawZones(){
 // thermo: elim 'start' | 'end' (stations closer to the start / end point are eliminated)
 // line:   elim 'off' | 'on' (stations not on / on the chosen train line are eliminated)
 // zone:   elim 'off' | 'on' (stations not in / in the chosen fare zone are eliminated)
+// stadium: elim 'off' | 'on' (stations whose closest stadium is not / is the chosen one are eliminated)
 const thermoLen = e => L.latLng(e.a).distanceTo(e.b);
 const thermoOk = e => Math.abs(thermoLen(e) - e.r * 1000) <= e.r * 1000 * THERMO_TOLERANCE;
-const isLive = p => p && (p.type === 'radar' ? p.center : p.type === 'line' ? p.line : p.type === 'zone' ? p.zone : p.a && p.b);
+const isLive = p => p && (p.type === 'radar' ? p.center : p.type === 'line' ? p.line : p.type === 'zone' ? p.zone : p.type === 'stadium' ? p.stadium : p.a && p.b);
 function passes(s, e){
+  if (e.type === 'stadium') return (s.stad === STAD_I[e.stadium]) === (e.elim === 'off');
   if (e.type === 'zone') return (s.zone === e.zone) === (e.elim === 'off');
   if (e.type === 'line') return LINE_SET[e.line].has(s.i) === (e.elim === 'off');
   if (e.type === 'thermo') {
@@ -383,11 +402,20 @@ function drawThermo(e, w, ends){
   L.polyline([e.a, e.b], {color: col, weight: w, interactive: false}).addTo(gFx);
   if (ends) for (const p of [e.a, e.b]) L.circleMarker(p, {radius: 3, color: col, fillColor: col, fillOpacity: 1, interactive: false}).addTo(gFx);
 }
+let stadKey = '';
+function drawStadiums(){
+  const picking = pending && pending.type === 'stadium', sel = picking ? pending.stadium : null, key = `${picking}|${sel}`;
+  if (key === stadKey) return;
+  stadKey = key; gStad.clearLayers();
+  if (!picking) return;
+  for (const x of STAD) L.marker(x.ll, {icon: L.divIcon({className: '', iconSize: [30, 30], iconAnchor: [15, 15], html: `<div class="stad${x.name === sel ? ' sel' : ''}"><i>⚽</i><b>${x.name}</b></div>`}), keyboard: false}).addTo(gStad)
+    .on('click', () => { if (!pending || pending.type !== 'stadium') return; pending.stadium = x.name; syncPlace(); renderSoon(); });
+}
 function render(){
   const live = isLive(pending) ? pending : null;
   const alive = aliveList(live);
   gArea.clearLayers(); gLines.clearLayers(); gFx.clearLayers(); gDots.clearLayers();
-  drawZones();
+  drawZones(); drawStadiums();
   const picking = pending && pending.type === 'line', sel = picking ? pending.line : null;
   if (showLines || picking) for (const id of Object.keys(LINES).sort((x, y) => (x === sel) - (y === sel)))
     L.polyline(LINES[id], {color: COLORS.lines[id], weight: id === sel ? LINE_WEIGHT + 2 : LINE_WEIGHT, opacity: sel && id !== sel ? LINE_DIM_OPACITY : LINE_OPACITY, interactive: false}).addTo(gLines);
@@ -399,10 +427,11 @@ function render(){
   });
   for (const e of effects) if (e.on) {
     if (e.type === 'thermo') { drawThermo(e, 3, true); continue; }
-    if (e.type === 'line' || e.type === 'zone') continue;
+    if (e.type === 'line' || e.type === 'zone' || e.type === 'stadium') continue;
     L.circle(e.center, {radius: e.r * 1000, color: COLORS.radar, weight: 1.5, fill: false, interactive: false}).addTo(gFx);
     L.circleMarker(e.center, {radius: 2, color: COLORS.radar, fillColor: COLORS.radar, fillOpacity: 1, interactive: false}).addTo(gFx);
   }
+  if (pending && pending.type === 'stadium' && pending.stadium) for (const s of ST) if (s.stad === STAD_I[pending.stadium]) L.circleMarker(s.ll, {radius: 8, color: COLORS.stadium, weight: 2.5, fill: false, interactive: false}).addTo(gFx);
   if (live && live.type === 'radar') {
     L.circle(live.center, {radius: live.r * 1000, color: COLORS.radar, weight: 2.5, dashArray: '6 4', fill: false, interactive: false}).addTo(gFx);
     L.circleMarker(live.center, {radius: 5, color: COLORS.radar, fillColor: COLORS.radar, fillOpacity: 1, interactive: false}).addTo(gFx);
@@ -428,13 +457,13 @@ function renderList(){
   $('list').innerHTML = effects.length ? '' : '<div class="muted">No effects yet. Add one from the menu.</div>';
   for (const e of effects) {
     const th = e.type === 'thermo', ln = e.type === 'line', d = document.createElement('div'); d.className = 'fx' + (e.on ? '' : ' off');
-    const zn = e.type === 'zone';
-    const name = zn ? `🎫 Fare zone ${e.zone}` : ln ? `🚆 Train line ${e.line}` : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${e.r} km`;
-    const sub = zn ? (e.elim === 'off' ? 'Off-zone' : 'In-zone') : ln ? (e.elim === 'off' ? 'Off-line' : 'On-line') : th ? (e.elim === 'start' ? 'Start side' : 'End side') : (e.elim === 'outside' ? 'Outside' : 'Inside');
+    const zn = e.type === 'zone', sd = e.type === 'stadium';
+    const name = sd ? `⚽ Football: ${e.stadium}` : zn ? `🎫 Fare zone ${e.zone}` : ln ? `🚆 Train line ${e.line}` : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${e.r} km`;
+    const sub = sd ? (e.elim === 'off' ? "Other stadiums'" : "This stadium's") : zn ? (e.elim === 'off' ? 'Off-zone' : 'In-zone') : ln ? (e.elim === 'off' ? 'Off-line' : 'On-line') : th ? (e.elim === 'start' ? 'Start side' : 'End side') : (e.elim === 'outside' ? 'Outside' : 'Inside');
     d.innerHTML = `<input type="checkbox" data-a="tog" ${e.on ? 'checked' : ''}><span>${name}<br><small>${sub} stations eliminated</small></span><button data-a="flip" title="Invert">⇄</button><button data-a="del" title="Delete">✕</button>`;
     d.onclick = ev => {
       const a = ev.target.dataset.a;
-      if (!a) { map.fitBounds(zn ? L.latLngBounds(ST.filter(s => s.zone === e.zone).map(s => s.ll)) : ln ? L.latLngBounds(LINES[e.line]) : th ? L.latLngBounds([e.a, e.b]) : L.circle(e.center, {radius: e.r * 1000}).getBounds(), {padding: [60, 60], maxZoom: 17}); return; }
+      if (!a) { map.fitBounds(sd ? L.latLngBounds([STAD[STAD_I[e.stadium]].ll, ...ST.filter(s => s.stad === STAD_I[e.stadium]).map(s => s.ll)]) : zn ? L.latLngBounds(ST.filter(s => s.zone === e.zone).map(s => s.ll)) : ln ? L.latLngBounds(LINES[e.line]) : th ? L.latLngBounds([e.a, e.b]) : L.circle(e.center, {radius: e.r * 1000}).getBounds(), {padding: [60, 60], maxZoom: 17}); return; }
       if (a === 'tog') e.on = !e.on;
       if (a === 'flip') e.elim = flipOf[e.elim];
       if (a === 'del') { if (!confirm(`Delete ${name.replace(/^\S+ /, '')}?`)) return; effects = effects.filter(x => x !== e); }
@@ -476,10 +505,12 @@ $('hr').oninput = () => { hideR = +$('hr').value; $('hrv').textContent = hideR +
 // ---- placement mode (radar: tap a centre; thermometer: tap start, tap end, then drag either) ----
 const fmt = m => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(2) + ' km';
 function startPlace(type, r){
-  const th = type === 'thermo', ln = type === 'line', zn = type === 'zone';
-  pending = zn ? {type, zone: null, elim: 'off'} : ln ? {type, line: null, elim: 'off'} : th ? {type, r, a: null, b: null, elim: 'start'} : {type, r, center: null, elim: 'outside'};
+  const th = type === 'thermo', ln = type === 'line', zn = type === 'zone', sd = type === 'stadium';
+  pending = sd ? {type, stadium: null, elim: 'off'} : zn ? {type, zone: null, elim: 'off'} : ln ? {type, line: null, elim: 'off'} : th ? {type, r, a: null, b: null, elim: 'start'} : {type, r, center: null, elim: 'outside'};
   gPins.clearLayers(); pins = {};
-  $('elim').innerHTML = zn
+  $('elim').innerHTML = sd
+    ? '<button data-v="off">Eliminate others</button><button data-v="on">Eliminate these</button>'
+    : zn
     ? '<button data-v="off">Eliminate off-zone</button><button data-v="on">Eliminate in-zone</button>'
     : ln
     ? '<button data-v="off">Eliminate off-line</button><button data-v="on">Eliminate on-line</button>'
@@ -489,14 +520,18 @@ function startPlace(type, r){
   $('lineSel').classList.toggle('open', ln);
   if (ln) $('lineSel').innerHTML = Object.keys(LINES).map(id => `<button class="chip" data-l="${id}"><i style="background:${COLORS.lines[id]}"></i>${id}</button>`).join('');
   openSheet('place'); setElim(pending.elim);
-  $('placeT').textContent = zn ? '🎫 Matching: fare zone' : ln ? '🚆 Matching: train line' : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${r} km`;
-  $(ln || zn ? 'matchBtn' : th ? 'thermoBtn' : 'radarBtn').classList.add('on'); map.getContainer().style.cursor = ln ? '' : 'crosshair';
+  $('locRow').style.display = sd ? '' : 'none';
+  $('placeT').textContent = sd ? '⚽ Matching: football' : zn ? '🎫 Matching: fare zone' : ln ? '🚆 Matching: train line' : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${r} km`;
+  $(ln || zn || sd ? 'matchBtn' : th ? 'thermoBtn' : 'radarBtn').classList.add('on'); map.getContainer().style.cursor = ln || sd ? '' : 'crosshair';
   render();
   syncPlace();
 }
 function syncPlace(){
   const p = pending; if (!p) return;
-  if (p.type === 'zone') {
+  if (p.type === 'stadium') {
+    $('placeH').innerHTML = (p.stadium ? `Stadium <b>${p.stadium}</b> chosen. Its stations are ringed.` : 'Tap a stadium on the map, or use your location.') + '<br>Hider says same closest stadium: eliminate others. Different: eliminate these.';
+    $('confirm').disabled = !p.stadium;
+  } else if (p.type === 'zone') {
     $('placeH').innerHTML = (p.zone ? `Zone <b>${p.zone}</b> chosen. Tap another zone to change.` : 'Tap a zone on the map to choose it.') + '<br>Hider says same zone: eliminate off-zone. Different zone: eliminate in-zone.';
     $('confirm').disabled = !p.zone;
   } else if (p.type === 'line') {
@@ -530,11 +565,12 @@ function addPin(label, key){
 }
 function endPlace(){
   pending = null; gPins.clearLayers(); pins = {}; openSheet(null);
-  $('lineSel').classList.remove('open'); ['radarBtn', 'thermoBtn', 'matchBtn'].forEach(b => $(b).classList.remove('on')); map.getContainer().style.cursor = ''; render();
+  $('lineSel').classList.remove('open'); $('locRow').style.display = 'none'; ['radarBtn', 'thermoBtn', 'matchBtn'].forEach(b => $(b).classList.remove('on')); map.getContainer().style.cursor = ''; render();
 }
 map.on('click', e => {
   if (!pending) { closeMenus(); return; }
   if (pending.type === 'line') return;
+  if (pending.type === 'stadium') return;
   if (pending.type === 'zone') { const z = zoneAt(e.latlng); if (z) { pending.zone = z; syncPlace(); render(); } return; }
   if (pending.type === 'radar') pending.center = e.latlng;
   else if (!pending.a) { pending.a = e.latlng; addPin('S', 'a'); }
@@ -546,7 +582,7 @@ $('cancel').onclick = endPlace;
 $('confirm').onclick = () => {
   const p = pending; if (!p || $('confirm').disabled) return;
   const ll = x => [x.lat, x.lng];
-  effects.push(p.type === 'zone' ? {id: Date.now(), type: 'zone', zone: p.zone, elim: p.elim, on: true} : p.type === 'line' ? {id: Date.now(), type: 'line', line: p.line, elim: p.elim, on: true} : p.type === 'radar'
+  effects.push(p.type === 'stadium' ? {id: Date.now(), type: 'stadium', stadium: p.stadium, elim: p.elim, on: true} : p.type === 'zone' ? {id: Date.now(), type: 'zone', zone: p.zone, elim: p.elim, on: true} : p.type === 'line' ? {id: Date.now(), type: 'line', line: p.line, elim: p.elim, on: true} : p.type === 'radar'
     ? {id: Date.now(), type: 'radar', r: p.r, center: ll(p.center), elim: p.elim, on: true}
     : {id: Date.now(), type: 'thermo', r: p.r, a: ll(p.a), b: ll(p.b), elim: p.elim, on: true});
   save('hs3_fx', effects); endPlace(); renderList();
@@ -554,7 +590,7 @@ $('confirm').onclick = () => {
 
 // ---- my location ----
 // `me` is {ll, acc} (a Leaflet LatLng and the accuracy in metres) once a fix arrives, else null. Later features can read it.
-let me = null, watchId = null, centerOnFix = false;
+let me = null, watchId = null, centerOnFix = false, locAction = null;
 function toast(msg){ const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', 5000); }
 function drawMe(){
   gMe.clearLayers();
@@ -576,10 +612,11 @@ function setTracking(on){
 function onFix(p){
   me = {ll: L.latLng(p.coords.latitude, p.coords.longitude), acc: p.coords.accuracy};
   drawMe(); syncMe();
+  if (locAction) { const f = locAction; locAction = null; f(); }
   if (centerOnFix) { centerOnFix = false; map.setView(me.ll, Math.max(map.getZoom(), LOCATION_ZOOM)); }
 }
 function onErr(e){
-  if (e.code === 1) { toast('Location permission denied. Allow it in your browser or site settings, then try again.'); setTracking(false); }
+  if (e.code === 1) { locAction = null; toast('Location permission denied. Allow it in your browser or site settings, then try again.'); setTracking(false); }
   else toast('Waiting for a location fix...');
 }
 const LocCtl = L.Control.extend({options: {position: 'bottomright'}, onAdd(){
@@ -589,6 +626,14 @@ const LocCtl = L.Control.extend({options: {position: 'bottomright'}, onAdd(){
   return b;
 }});
 new LocCtl().addTo(map);
+$('useLoc').onclick = () => {
+  const pick = () => {
+    if (!pending || pending.type !== 'stadium') return;
+    pending.stadium = STAD.reduce((b, x) => me.ll.distanceTo(x.ll) < me.ll.distanceTo(b.ll) ? x : b).name;
+    syncPlace(); render();
+  };
+  if (me) pick(); else { locAction = pick; setTracking(true); toast('Getting your location...'); }
+};
 $('showMe').onchange = () => setTracking($('showMe').checked);
 if (SHOW_LOCATION_DEFAULT) setTracking(true);
 
