@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hide and Seek App</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+  html,body{height:100%;margin:0;font-family:system-ui,sans-serif;color:var(--ink);-webkit-tap-highlight-color:transparent}
+  #map{position:absolute;inset:0}
+  .ui{position:absolute;z-index:1000}
+  #bar{left:8px;right:8px;top:calc(8px + env(safe-area-inset-top,0px));display:flex;flex-wrap:wrap;gap:6px;align-items:flex-start}
+  .btn{font:inherit;font-size:15px;min-height:42px;padding:0 12px;border:0;border-radius:10px;background:var(--panel);box-shadow:0 2px 8px #0003;color:inherit;display:flex;align-items:center;gap:6px;cursor:pointer}
+  .btn.on{background:var(--ink);color:#fff}
+  .btn.go{background:var(--go);color:#fff}
+  .btn:disabled{opacity:.4}
+  .menu{position:absolute;top:48px;left:0;background:var(--panel);border-radius:10px;box-shadow:0 2px 8px #0003;padding:4px;display:none;min-width:130px}
+  .menu.open{display:block}
+  .menu button{display:block;width:100%;text-align:left;font:inherit;font-size:15px;padding:10px 12px;border:0;background:none;border-radius:8px}
+  .menu button:active{background:#0001}
+  .sheet{left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));max-width:440px;background:var(--panel);border-radius:12px;box-shadow:0 2px 12px #0004;padding:10px 12px;font-size:14px;display:none}
+  .sheet.open{display:block}
+  .seg{display:flex;margin:8px 0;border-radius:10px;overflow:hidden;border:1px solid var(--ink)}
+  .seg button{flex:1;font:inherit;padding:10px 4px;border:0;background:#fff;color:inherit}
+  .seg button.sel{background:var(--ink);color:#fff}
+  .acts{display:flex;gap:8px}.acts .btn{flex:1;justify-content:center;box-shadow:none;border:1px solid #1d2b2a33}
+  .muted{color:var(--muted);font-size:12px}
+  #list{max-height:36vh;overflow:auto;margin:6px 0}
+  .fx{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #0001}
+  .fx input{width:22px;height:22px;flex:none}
+  .fx span{flex:1;line-height:1.25}.fx.off span{opacity:.45;text-decoration:line-through}
+  .fx button{font:inherit;min-width:40px;min-height:36px;border:1px solid #1d2b2a33;background:#fff;border-radius:8px}
+  #cfg{display:flex;align-items:center;gap:8px;margin:8px 0}#cfg input{flex:1}
+  .pin{width:30px;height:30px;border-radius:50%;background:var(--pin);color:#fff;border:2px solid #fff;box-shadow:0 1px 5px #0006;display:flex;align-items:center;justify-content:center;font:700 13px system-ui;box-sizing:border-box}
+  .chips{display:none;flex-wrap:wrap;gap:6px;margin:8px 0}.chips.open{display:flex}
+  .chip{font:inherit;display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #1d2b2a55;border-radius:16px;background:#fff;color:inherit}
+  .chip.sel{background:var(--ink);color:#fff}.chip i{width:12px;height:12px;border-radius:50%;display:inline-block;border:1px solid #fff}
+  .chk{display:flex;align-items:center;gap:8px;margin:10px 0 4px}.chk input{width:22px;height:22px}
+  .zl{width:34px;height:22px;border-radius:11px;background:#000b;color:#fff;font:700 13px/22px system-ui;text-align:center}.zl.sel{background:var(--go)}
+  .locbtn{width:42px;padding:0;justify-content:center}
+  #toast{left:8px;right:8px;top:calc(110px + env(safe-area-inset-top,0px));max-width:440px;background:var(--ink);color:#fff;border-radius:10px;padding:8px 12px;font-size:14px;display:none;pointer-events:none}
+  h4{margin:0;display:flex;justify-content:space-between;align-items:center}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="bar" class="ui">
+  <div style="position:relative">
+    <button class="btn" id="radarBtn">📡 Radar ▾</button>
+    <div class="menu" id="radarMenu"></div>
+  </div>
+  <div style="position:relative">
+    <button class="btn" id="thermoBtn">🌡️ Thermo ▾</button>
+    <div class="menu" id="thermoMenu"></div>
+  </div>
+  <div style="position:relative">
+    <button class="btn" id="matchBtn">🔗 Matching ▾</button>
+    <div class="menu" id="matchMenu"><button data-m="line">🚆 Train line</button><button data-m="zone">🎫 Fare zone</button></div>
+  </div>
+  <button class="btn" id="fxBtn">Effects (<span id="fxN">0</span>)</button>
+  <button class="btn" id="cfgBtn" aria-label="Settings">⚙</button>
+</div>
+
+<div id="toast" class="ui"></div>
+
+<div id="place" class="ui sheet">
+  <b id="placeT">Radar</b>
+  <div class="muted" id="placeH"></div>
+  <div class="chips" id="lineSel"></div>
+  <div class="seg" id="elim"></div>
+  <div class="acts"><button class="btn" id="cancel">Cancel</button><button class="btn go" id="confirm" disabled>Confirm</button></div>
+</div>
+
+<div id="fx" class="ui sheet">
+  <h4>Effects <span class="muted" id="alive"></span></h4>
+  <div id="list"></div>
+  <div class="acts"><button class="btn" id="clear">Clear all</button><button class="btn" id="closeFx">Close</button></div>
+</div>
+
+<div id="cfgP" class="ui sheet">
+  <b>Hiding radius</b>
+  <div id="cfg"><input id="hr" type="range" min="0.05" max="1" step="0.05"><b id="hrv"></b></div>
+  <div class="muted">Play area = everything within this radius of any station.</div>
+  <label class="chk"><input type="checkbox" id="showLines"> Show train lines</label>
+  <label class="chk"><input type="checkbox" id="showZones"> Show fare zones</label>
+  <label class="chk"><input type="checkbox" id="showMe"> Show my location</label>
+  <div class="acts" style="margin-top:8px"><button class="btn" id="basemap">Switch map style</button><button class="btn" id="closeCfg">Close</button></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// name|lat|lng|fare zone, from Jet Lag - Stations.csv (first Zone column)
+const DATA = `
+Vanløse|55.68721|12.49135|2
+Flintholm|55.68574|12.49926|2
+Lindevang|55.68347|12.51312|2
+Fasanvej|55.68167|12.52310|2
+Frederiksberg|55.68122|12.53172|2
+Forum|55.68182|12.55243|1
+Nørreport|55.68351|12.57224|1
+Kongens Nytorv|55.67943|12.58514|1
+Christianshavn|55.67227|12.59116|1
+Islands Brygge|55.66356|12.58526|1
+DR Byen|55.65583|12.58898|3
+Sundby|55.64520|12.58573|3
+Bella Center|55.63805|12.58293|3
+Ørestad|55.62843|12.57878|3
+Vestamager|55.61940|12.57560|3
+Amagerbro|55.66356|12.60271|1
+Lergravsparken|55.66224|12.61629|1
+Øresund|55.66135|12.62882|3
+Amager Strand|55.65614|12.63189|3
+Femøren|55.64521|12.63837|3
+Kastrup|55.63567|12.64696|4
+Københavns Lufthavn|55.63044|12.64926|4
+Marmokirken|55.68525|12.58858|1
+Østerport|55.69255|12.58733|1
+Trianglen|55.69916|12.57607|1
+Poul Henningsens Plads|55.70925|12.57671|2
+Vibenshus Runddel|55.70596|12.56201|2
+Skjolds Plads|55.70328|12.54823|2
+Nuuks Plads|55.68880|12.54289|2
+Nørrebros Runddel|55.69394|12.54890|2
+Aksel Møllers Have|55.68646|12.53357|2
+Frederiksberg Allé|55.67373|12.54041|1
+Enghave Plads|55.66724|12.54571|1
+København H|55.67276|12.56492|1
+Rådhuspladsen|55.67637|12.56880|1
+Gammel Strand|55.67774|12.57951|1
+Havneholmen|55.66091|12.55943|1
+Enghave Brygge|55.65375|12.55613|1
+Sluseholmen|55.64584|12.54375|1
+Mozarts Plads|55.64905|12.53396|2
+København Syd|55.65239|12.51697|2
+Nordhavn|55.70533|12.59089|1
+Orientkaj|55.71161|12.59527|1
+Ishøj|55.61334|12.35803|55
+Ishøj Strand|55.61419|12.36952|55
+Strandhaven|55.61895|12.37979|55
+Vallensbæk|55.62325|12.38844|55
+Brøndbyvester|55.64375|12.40089|43
+Delta Park|55.62766|12.38995|44
+Kirkebjerg|55.65422|12.39455|43
+Glostrup|55.66325|12.39872|43
+Glostrup Hospital|55.66995|12.39172|43
+Glostrup Nord|55.68006|12.39675|43
+Glostrup Ejby|55.69766|12.41427|32
+Rødovre Nord|55.70610|12.42751|31
+Herlev Syd|55.71358|12.43537|31
+Herlev Bymidte|55.72317|12.44130|31
+Herlev Hospital|55.73012|12.44595|31
+Dynamovej|55.73469|12.45907|31
+Gladsaxe Trafikplads|55.73739|12.47416|31
+Gladsaxevej|55.74016|12.48628|31
+Gladsaxe Rådhus|55.74308|12.49340|31
+Buddinge|55.74726|12.49348|31
+Gammelmosevej|55.75687|12.49501|41
+Lyngby|55.76818|12.50287|41
+Lyngby Centrum|55.77087|12.50558|41
+Fortunbyen|55.77480|12.51954|41
+Rævehøjvej|55.78720|12.52848|51
+Lundtofte|55.79465|12.53030|51
+Akademivej|55.78022|12.51949|51
+Anker Engelundsvej|55.78554|12.52263|51
+Vesterport|55.67656|12.56250|1
+Dybbølsbro|55.66537|12.55967|1
+Carlsberg|55.66345|12.53621|1
+Valby|55.66400|12.51443|2
+Vigerslev Allé|55.65972|12.49943|2
+Danshøj|55.66427|12.49373|2
+Hvidovre|55.66449|12.47473|32
+Rødovre|55.66482|12.45864|32
+Brøndbyøster|55.66507|12.44021|32
+Sydhavn|55.65474|12.53744|2
+Sjælør|55.65173|12.52710|2
+Åmarken|55.63969|12.49969|33
+Friheden|55.62894|12.48254|33
+Avedøre|55.62520|12.45421|33
+Brøndby Strand|55.62100|12.42175|44
+Svanemøllen|55.71555|12.57805|2
+Hellerup|55.73102|12.56766|30
+Charlottenlund|55.75185|12.57214|40
+Ordrup|55.76286|12.58389|40
+Klampenborg|55.77653|12.58804|40
+Bernstorffsvej|55.74305|12.55749|30
+Gentofte|55.75357|12.54169|30
+Jægersborg|55.76162|12.52161|41
+Ryparken|55.71518|12.55921|2
+Emdrup|55.72089|12.54069|2
+Dyssegård|55.73216|12.53617|31
+Vangede|55.73947|12.52364|31
+Kildebakke|55.74461|12.50853|31
+Nørrebro|55.70072|12.53782|2
+Bispebjerg|55.70628|12.54148|2
+Fuglebakken|55.69540|12.52674|2
+Grøndal|55.69052|12.51548|2
+Peter Bangs Vej|55.67808|12.50371|2
+Langgade|55.66705|12.50422|2
+KB Hallen|55.67771|12.49248|2
+Ålholm|55.67197|12.49331|2
+Jyllingevej|55.69055|12.47755|2
+Islev|55.69911|12.46932|2
+Husum|55.70941|12.46403|2
+Herlev|55.71900|12.44349|31
+`;
+// line|station numbers in order along the line (row numbers in Jet Lag - Stations.csv, from Jet Lag - Lines.csv)
+const LINES_DATA = `
+M1|15,14,13,12,11,10,9,8,7,6,5,4,3,2,1
+M2|22,21,20,19,18,17,16,9,8,7,6,5,4,3,2,1
+M3|34,33,32,5,31,29,30,100,28,27,26,25,24,23,8,36,35,34
+M4|41,40,39,38,37,34,35,36,8,23,24,42,43
+A/E|44,47,86,85,84,83,41,82,81,73,34,72,7,24,42,87,88,92,93,94,65
+B/Bx|51,80,79,78,77,75,74,73,34,72,7,24,42,87,95,96,97,98,99,63
+C/H|111,110,109,108,1,2,104,105,75,74,73,34,72,7,24,42,87,88,89,90,91
+F|41,76,77,107,106,2,103,102,100,101,95,88
+L|44,45,46,47,49,48,50,51,52,53,54,55,56,111,57,58,59,60,61,62,63,64,65,66,67,70,71,68,69
+`;
+// ---- COLOURS: change these to restyle the app ----
+const COLORS = {
+  area:      '#f97316',  // play area shading (stations still in play)
+  dotIn:     '#12403c',  // station dot, still in play
+  dotInEdge: '#ffffff',  // outline of in-play station dots
+  dotOut:    '#999999',  // station dot, eliminated
+  radar:     '#48A3F7',  // radar circles, centre dots and preview
+  thermoOk:  '#16a34a',  // thermometer line when its length matches the chosen length
+  thermoBad: '#dc2626',  // thermometer line when its length does not match
+  thermoPin: '#334155',  // thermometer start/end handles and the dashed dividing line
+  lines: {                 // train line colours
+    M1: '#16a34a', M2: '#eab308', M3: '#dc2626', M4: '#2563eb',
+    'A/E': '#0ea5e9', 'B/Bx': '#65a30d', 'C/H': '#d97706', F: '#a16207', L: '#14b8a6'
+  },
+  zones: {                 // fare zone colours (zone number: colour)
+    1: '#ef4444', 2: '#3b82f6', 3: '#22c55e', 4: '#eab308', 30: '#a855f7', 31: '#06b6d4', 32: '#f97316',
+    33: '#84cc16', 40: '#ec4899', 41: '#14b8a6', 43: '#8b5cf6', 44: '#f43f5e', 51: '#0ea5e9', 55: '#a3a3a3'
+  },
+  zoneBorder: '#1f2937',   // lines between fare zones
+  me:        '#2563eb',  // your location dot and accuracy circle
+  ink:       '#1d2b2a',  // text, selected buttons and toggles
+  go:        '#c2410c',  // Confirm button
+  panel:     '#fffffff2',// menu and panel background
+  muted:     '#666666'   // small hint text
+};
+// ---- SETTINGS: change these to adjust the game ----
+const RADII = [5, 3, 2, 1];                // radar radii (km)
+const THERMO_LENGTHS = [0.25, 0.5, 1, 2];  // thermometer lengths (km)
+const THERMO_TOLERANCE = 0.05;
+const SHOW_LINES_DEFAULT = true;           // are the train lines drawn when the app opens? (also a switch in settings)
+const LINE_WEIGHT = 3;                     // train line thickness (the chosen line is drawn 2 thicker)
+const LINE_OPACITY = 0.8;                  // train line opacity
+const SHOW_LOCATION_DEFAULT = false;       // start tracking your location when the app opens? (the browser asks for permission; also a switch in settings)
+const LOCATION_ZOOM = 15;                  // zoom level used when the location button recentres the map
+const SHOW_ZONES_DEFAULT = false;          // are the fare zones drawn when the app opens? (also a switch in settings)
+const ZONE_FILL_OPACITY = 0.3;             // fare zone shading opacity
+const ZONE_DIM_OPACITY = 0.08;             // shading of the other zones while one is chosen for a matching question
+const ZONE_REACH_KM = 1.5;                 // how far from a station its zone shading extends
+const ZONE_LABEL_SPACING_KM = 4;           // zone numbers are repeated at least this far apart
+const LINE_DIM_OPACITY = 0.2;              // opacity of the other lines while one is chosen for a matching question             // thermometer line is green within this fraction of its chosen length
+
+for (const k of ['ink', 'go', 'panel', 'muted']) document.documentElement.style.setProperty('--' + k, COLORS[k]);
+document.documentElement.style.setProperty('--pin', COLORS.thermoPin);
+
+const ST = DATA.trim().split('\n').map((l, i) => { const [name, a, o, zone] = l.split('|'); return {i, name, zone, lat: +a, lng: +o, ll: L.latLng(+a, +o)}; });
+const LINES = {}, LINE_SET = {};
+for (const l of LINES_DATA.trim().split('\n')) { const [id, idx] = l.split('|'); LINES[id] = idx.split(',').map(n => ST[n - 1].ll); LINE_SET[id] = new Set(idx.split(',').map(n => n - 1)); }
+const $ = id => document.getElementById(id);
+const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch(e){ return d; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} };
+
+const OLD_LINES = {A: 'A/E', B: 'B/Bx', C: 'C/H'};   // saved effects from before the express lines were merged
+let hideR = load('hs3_hr', 0.5), effects = load('hs3_fx', []), pending = null, pins = {}, showLines = SHOW_LINES_DEFAULT, showZones = SHOW_ZONES_DEFAULT, zoneGeo = null, zoneKey = '';
+effects = effects.map(e => e.type === 'line' && OLD_LINES[e.line] ? {...e, line: OLD_LINES[e.line]} : e).filter(e => e.type !== 'line' || LINE_SET[e.line]);
+
+// ---- map ----
+const map = L.map('map', {zoomControl: false, preferCanvas: true}).setView([55.69, 12.5], 11);
+L.control.zoom({position: 'bottomright'}).addTo(map);
+const BASES = [
+  () => L.tileLayer('https://{s}.basemaps.cartocdn.com/rasterTiles/voyager/{z}/{x}/{y}{r}.png', {subdomains: 'abcd', maxZoom: 19, attribution: '© OpenStreetMap contributors © CARTO'}),
+  () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {maxZoom: 19, attribution: 'Tiles © Esri'}),
+  () => L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, attribution: '© OpenStreetMap'})
+];
+let baseLayer, baseIdx = -1;
+function useBase(i){
+  if (baseLayer) map.removeLayer(baseLayer);
+  baseIdx = i % BASES.length;
+  baseLayer = BASES[baseIdx]().addTo(map); baseLayer.bringToBack();
+  let ok = 0, bad = 0;
+  baseLayer.on('tileload', () => ok++);
+  baseLayer.on('tileerror', () => { if (++bad === 4 && !ok && baseIdx < BASES.length - 1) useBase(baseIdx + 1); });
+}
+useBase(0);
+
+// The play area circles live in their own pane whose opacity is set as a whole,
+// so overlapping circles merge visually with no geometry math.
+map.createPane('area').style.opacity = 0.3;
+map.getPane('area').style.zIndex = 300;
+map.createPane('zones').style.zIndex = 310;
+const gArea = L.layerGroup().addTo(map), gLines = L.layerGroup().addTo(map), gZones = L.layerGroup().addTo(map), gFx = L.layerGroup().addTo(map), gDots = L.layerGroup().addTo(map), gPins = L.layerGroup().addTo(map), gMe = L.layerGroup().addTo(map);
+
+// ---- fare zones: every point belongs to the zone of its nearest station ----
+// Each station's cell is a circle (ZONE_REACH_KM) trimmed by the halfway line to every neighbour, built once when first needed.
+function buildZones(){
+  const k = Math.cos(55.69 * Math.PI / 180), R = ZONE_REACH_KM / 111.32;
+  const P = ST.map(s => ({x: s.lng * k, y: s.lat})), rings = {}, edges = [], labels = [], zedges = {};
+  const ll = v => [v.y, v.x / k];
+  ST.forEach((s, i) => {
+    let poly = [];
+    for (let a = 0; a < 24; a++) { const t = a / 24 * 2 * Math.PI; poly.push({x: P[i].x + R * Math.cos(t), y: P[i].y + R * Math.sin(t), l: 'o'}); }
+    ST.forEach((_, j) => {
+      if (j === i) return;
+      const dx = P[j].x - P[i].x, dy = P[j].y - P[i].y; if (dx * dx + dy * dy > 4 * R * R) return;
+      const mx = (P[i].x + P[j].x) / 2, my = (P[i].y + P[j].y) / 2, f = p => (p.x - mx) * dx + (p.y - my) * dy, out = [];
+      poly.forEach((p, n) => {
+        const q = poly[(n + 1) % poly.length], fp = f(p), fq = f(q), t = fp / (fp - fq);
+        if (fp <= 0) { out.push(p); if (fq > 0) out.push({x: p.x + t * (q.x - p.x), y: p.y + t * (q.y - p.y), l: j}); }
+        else if (fq <= 0) out.push({x: p.x + t * (q.x - p.x), y: p.y + t * (q.y - p.y), l: p.l});
+      });
+      poly = out;
+    });
+    (rings[s.zone] = rings[s.zone] || []).push(poly.map(ll));
+    poly.forEach((v, n) => { const w = poly[(n + 1) % poly.length]; if (v.l === 'o' || (v.l > i && ST[v.l].zone !== s.zone)) { const e = [ll(v), ll(w)]; edges.push(e); (zedges[s.zone] = zedges[s.zone] || []).push(e); if (v.l !== 'o') (zedges[ST[v.l].zone] = zedges[ST[v.l].zone] || []).push(e); } });
+  });
+  // main label of each zone: the spot deepest inside it (furthest from its border), found by sampling a grid
+  const segD = (x, y, e) => {
+    const ax = e[0][1] * k, ay = e[0][0], dx = e[1][1] * k - ax, dy = e[1][0] - ay, t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot(x - ax - t * dx, y - ay - t * dy);
+  };
+  const step = 0.25 / 111.32;
+  for (const z of Object.keys(rings)) {
+    const zs = P.filter((_, j) => ST[j].zone === z), put = [];
+    const x0 = Math.min(...zs.map(p => p.x)) - R, x1 = Math.max(...zs.map(p => p.x)) + R, y0 = Math.min(...zs.map(p => p.y)) - R, y1 = Math.max(...zs.map(p => p.y)) + R;
+    let best = null, bd = -1;
+    for (let y = y0; y <= y1; y += step) for (let x = x0; x <= x1; x += step) {
+      let n = 0, nd = Infinity;
+      for (let j = 0; j < P.length; j++) { const d = (P[j].x - x) ** 2 + (P[j].y - y) ** 2; if (d < nd) { nd = d; n = j; } }
+      if (ST[n].zone !== z || nd > R * R) continue;
+      let m = Infinity; for (const e of zedges[z] || []) m = Math.min(m, segD(x, y, e));
+      if (m > bd) { bd = m; best = L.latLng(y, x / k); }
+    }
+    if (best) { put.push({ll: best}); labels.push({z, ll: best, free: true}); }
+    for (const s of ST) if (s.zone === z && put.every(p => p.ll.distanceTo(s.ll) > ZONE_LABEL_SPACING_KM * 1000)) { put.push(s); labels.push({z, ll: s.ll}); }
+  }
+  return {rings, edges, labels};
+}
+const zoneAt = ll => { let best = null, bd = Infinity; for (const s of ST) { const d = s.ll.distanceTo(ll); if (d < bd) { bd = d; best = s; } } return bd <= ZONE_REACH_KM * 1000 ? best.zone : null; };
+function drawZones(){
+  const picking = pending && pending.type === 'zone', sel = picking ? pending.zone : null, key = `${showZones || picking}|${picking}|${sel}`;
+  if (key === zoneKey) return;
+  zoneKey = key; gZones.clearLayers();
+  if (!(showZones || picking)) return;
+  const g = zoneGeo = zoneGeo || buildZones();
+  for (const z of Object.keys(g.rings)) L.polygon(g.rings[z].map(r => [r]), {pane: 'zones', stroke: false, fillColor: COLORS.zones[z], fillOpacity: sel ? (z === sel ? Math.min(0.6, ZONE_FILL_OPACITY * 1.8) : ZONE_DIM_OPACITY) : ZONE_FILL_OPACITY, interactive: false}).addTo(gZones);
+  L.polyline(g.edges, {color: COLORS.zoneBorder, weight: 2, opacity: 0.8, interactive: false}).addTo(gZones);
+  if (picking) for (const l of g.labels) L.marker(l.ll, {icon: L.divIcon({className: '', iconSize: [34, 22], iconAnchor: [17, l.free ? 11 : 30], html: `<div class="zl${l.z === sel ? ' sel' : ''}">${l.z}</div>`}), interactive: false, keyboard: false}).addTo(gZones);
+}
+
+// ---- effects: each one decides, from a station's centre point only, whether that station survives ----
+// radar:  elim 'outside' | 'inside' (of the circle)
+// thermo: elim 'start' | 'end' (stations closer to the start / end point are eliminated)
+// line:   elim 'off' | 'on' (stations not on / on the chosen train line are eliminated)
+// zone:   elim 'off' | 'on' (stations not in / in the chosen fare zone are eliminated)
+const thermoLen = e => L.latLng(e.a).distanceTo(e.b);
+const thermoOk = e => Math.abs(thermoLen(e) - e.r * 1000) <= e.r * 1000 * THERMO_TOLERANCE;
+const isLive = p => p && (p.type === 'radar' ? p.center : p.type === 'line' ? p.line : p.type === 'zone' ? p.zone : p.a && p.b);
+function passes(s, e){
+  if (e.type === 'zone') return (s.zone === e.zone) === (e.elim === 'off');
+  if (e.type === 'line') return LINE_SET[e.line].has(s.i) === (e.elim === 'off');
+  if (e.type === 'thermo') {
+    if (thermoLen(e) < 1) return true;            // start and end on top of each other: no effect yet
+    const dA = s.ll.distanceTo(e.a), dB = s.ll.distanceTo(e.b);
+    return e.elim === 'start' ? dB < dA : dA < dB;
+  }
+  return (s.ll.distanceTo(e.center) <= e.r * 1000) === (e.elim === 'outside');
+}
+function aliveList(extra){
+  const fx = [...effects.filter(e => e.on), ...(extra ? [extra] : [])];
+  return ST.map(s => fx.every(e => passes(s, e)));
+}
+const flipOf = {outside: 'inside', inside: 'outside', start: 'end', end: 'start', off: 'on', on: 'off'};
+
+// ---- drawing ----
+function drawThermo(e, w, ends){
+  const col = thermoOk(e) ? COLORS.thermoOk : COLORS.thermoBad;
+  L.polyline([e.a, e.b], {color: col, weight: w, interactive: false}).addTo(gFx);
+  if (ends) for (const p of [e.a, e.b]) L.circleMarker(p, {radius: 3, color: col, fillColor: col, fillOpacity: 1, interactive: false}).addTo(gFx);
+}
+function render(){
+  const live = isLive(pending) ? pending : null;
+  const alive = aliveList(live);
+  gArea.clearLayers(); gLines.clearLayers(); gFx.clearLayers(); gDots.clearLayers();
+  drawZones();
+  const picking = pending && pending.type === 'line', sel = picking ? pending.line : null;
+  if (showLines || picking) for (const id of Object.keys(LINES).sort((x, y) => (x === sel) - (y === sel)))
+    L.polyline(LINES[id], {color: COLORS.lines[id], weight: id === sel ? LINE_WEIGHT + 2 : LINE_WEIGHT, opacity: sel && id !== sel ? LINE_DIM_OPACITY : LINE_OPACITY, interactive: false}).addTo(gLines);
+  ST.forEach((s, i) => {
+    if (alive[i]) L.circle(s.ll, {radius: hideR * 1000, pane: 'area', stroke: false, fillColor: COLORS.area, fillOpacity: 1, interactive: false}).addTo(gArea);
+    L.circleMarker(s.ll, alive[i]
+      ? {radius: 4, color: COLORS.dotInEdge, weight: 1.5, fillColor: COLORS.dotIn, fillOpacity: 1, interactive: false}
+      : {radius: 3, weight: 0, fillColor: COLORS.dotOut, fillOpacity: 0.45, interactive: false}).addTo(gDots);
+  });
+  for (const e of effects) if (e.on) {
+    if (e.type === 'thermo') { drawThermo(e, 3, true); continue; }
+    if (e.type === 'line' || e.type === 'zone') continue;
+    L.circle(e.center, {radius: e.r * 1000, color: COLORS.radar, weight: 1.5, fill: false, interactive: false}).addTo(gFx);
+    L.circleMarker(e.center, {radius: 2, color: COLORS.radar, fillColor: COLORS.radar, fillOpacity: 1, interactive: false}).addTo(gFx);
+  }
+  if (live && live.type === 'radar') {
+    L.circle(live.center, {radius: live.r * 1000, color: COLORS.radar, weight: 2.5, dashArray: '6 4', fill: false, interactive: false}).addTo(gFx);
+    L.circleMarker(live.center, {radius: 5, color: COLORS.radar, fillColor: COLORS.radar, fillOpacity: 1, interactive: false}).addTo(gFx);
+  }
+  if (live && live.type === 'thermo') {
+    drawThermo(live, 4, false);
+    // dashed dividing line: the set of points equidistant from start and end, drawn as many short
+    // segments so the map projection cannot pull the line off the midpoint
+    const a = live.a, b = live.b, lat0 = (a.lat + b.lat) / 2, lng0 = (a.lng + b.lng) / 2, k = Math.cos(lat0 * Math.PI / 180);
+    const dx = (b.lng - a.lng) * k, dy = b.lat - a.lat, n = Math.hypot(dx, dy) || 1, ux = -dy / n, uy = dx / n;
+    const pts = [];
+    for (let i = -20; i <= 20; i++) pts.push([lat0 + uy * i * 0.02, lng0 + ux * i * 0.02 / k]);
+    L.polyline(pts, {color: COLORS.thermoPin, weight: 1.5, dashArray: '6 6', interactive: false}).addTo(gFx);
+  }
+  $('alive').textContent = `${alive.filter(Boolean).length} of ${ST.length} stations still in play`;
+  $('fxN').textContent = effects.filter(e => e.on).length;
+  drawMe();
+}
+let raf = 0;
+const renderSoon = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; render(); }); };
+
+function renderList(){
+  $('list').innerHTML = effects.length ? '' : '<div class="muted">No effects yet. Add one from the menu.</div>';
+  for (const e of effects) {
+    const th = e.type === 'thermo', ln = e.type === 'line', d = document.createElement('div'); d.className = 'fx' + (e.on ? '' : ' off');
+    const zn = e.type === 'zone';
+    const name = zn ? `🎫 Fare zone ${e.zone}` : ln ? `🚆 Train line ${e.line}` : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${e.r} km`;
+    const sub = zn ? (e.elim === 'off' ? 'Off-zone' : 'In-zone') : ln ? (e.elim === 'off' ? 'Off-line' : 'On-line') : th ? (e.elim === 'start' ? 'Start side' : 'End side') : (e.elim === 'outside' ? 'Outside' : 'Inside');
+    d.innerHTML = `<input type="checkbox" data-a="tog" ${e.on ? 'checked' : ''}><span>${name}<br><small>${sub} stations eliminated</small></span><button data-a="flip" title="Invert">⇄</button><button data-a="del" title="Delete">✕</button>`;
+    d.onclick = ev => {
+      const a = ev.target.dataset.a;
+      if (!a) { map.fitBounds(zn ? L.latLngBounds(ST.filter(s => s.zone === e.zone).map(s => s.ll)) : ln ? L.latLngBounds(LINES[e.line]) : th ? L.latLngBounds([e.a, e.b]) : L.circle(e.center, {radius: e.r * 1000}).getBounds(), {padding: [60, 60], maxZoom: 17}); return; }
+      if (a === 'tog') e.on = !e.on;
+      if (a === 'flip') e.elim = flipOf[e.elim];
+      if (a === 'del') { if (!confirm(`Delete ${name.replace(/^\S+ /, '')}?`)) return; effects = effects.filter(x => x !== e); }
+      save('hs3_fx', effects); renderList(); render();
+    };
+    $('list').appendChild(d);
+  }
+}
+
+// ---- sheets & menus ----
+const sheets = ['place', 'fx', 'cfgP'];
+const closeMenus = () => ['radarMenu', 'thermoMenu', 'matchMenu'].forEach(m => $(m).classList.remove('open'));
+function openSheet(id){ sheets.forEach(s => $(s).classList.toggle('open', s === id)); closeMenus(); }
+const busy = () => !!pending;
+
+function setupMenu(btn, menu, list, type){
+  $(menu).innerHTML = list.map(r => `<button data-r="${r}">${r} km</button>`).join('');
+  $(btn).onclick = () => { if (busy()) return; const o = $(menu).classList.contains('open'); closeMenus(); $(menu).classList.toggle('open', !o); };
+  $(menu).onclick = e => { const r = e.target.dataset.r; if (r) startPlace(type, +r); };
+}
+setupMenu('radarBtn', 'radarMenu', RADII, 'radar');
+setupMenu('thermoBtn', 'thermoMenu', THERMO_LENGTHS, 'thermo');
+$('matchBtn').onclick = () => { if (busy()) return; const o = $('matchMenu').classList.contains('open'); closeMenus(); $('matchMenu').classList.toggle('open', !o); };
+$('matchMenu').onclick = e => { const m = e.target.dataset.m; if (m) startPlace(m); };
+$('showZones').checked = showZones;
+$('showZones').onchange = () => { showZones = $('showZones').checked; render(); };
+$('showLines').checked = showLines;
+$('showLines').onchange = () => { showLines = $('showLines').checked; render(); };
+$('fxBtn').onclick = () => { if (busy()) return; const o = $('fx').classList.contains('open'); openSheet(o ? null : 'fx'); renderList(); };
+$('closeFx').onclick = () => openSheet(null);
+$('cfgBtn').onclick = () => { if (!busy()) openSheet($('cfgP').classList.contains('open') ? null : 'cfgP'); };
+$('closeCfg').onclick = () => openSheet(null);
+$('basemap').onclick = () => useBase(baseIdx + 1);
+$('clear').onclick = () => { if (effects.length && confirm('Remove all effects?')) { effects = []; save('hs3_fx', effects); renderList(); render(); } };
+
+$('hr').value = hideR; $('hrv').textContent = hideR + ' km';
+$('hr').oninput = () => { hideR = +$('hr').value; $('hrv').textContent = hideR + ' km'; save('hs3_hr', hideR); render(); };
+
+// ---- placement mode (radar: tap a centre; thermometer: tap start, tap end, then drag either) ----
+const fmt = m => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(2) + ' km';
+function startPlace(type, r){
+  const th = type === 'thermo', ln = type === 'line', zn = type === 'zone';
+  pending = zn ? {type, zone: null, elim: 'off'} : ln ? {type, line: null, elim: 'off'} : th ? {type, r, a: null, b: null, elim: 'start'} : {type, r, center: null, elim: 'outside'};
+  gPins.clearLayers(); pins = {};
+  $('elim').innerHTML = zn
+    ? '<button data-v="off">Eliminate off-zone</button><button data-v="on">Eliminate in-zone</button>'
+    : ln
+    ? '<button data-v="off">Eliminate off-line</button><button data-v="on">Eliminate on-line</button>'
+    : th
+    ? '<button data-v="start">Eliminate start side</button><button data-v="end">Eliminate end side</button>'
+    : '<button data-v="outside">Eliminate outside</button><button data-v="inside">Eliminate inside</button>';
+  $('lineSel').classList.toggle('open', ln);
+  if (ln) $('lineSel').innerHTML = Object.keys(LINES).map(id => `<button class="chip" data-l="${id}"><i style="background:${COLORS.lines[id]}"></i>${id}</button>`).join('');
+  openSheet('place'); setElim(pending.elim);
+  $('placeT').textContent = zn ? '🎫 Matching: fare zone' : ln ? '🚆 Matching: train line' : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${r} km`;
+  $(ln || zn ? 'matchBtn' : th ? 'thermoBtn' : 'radarBtn').classList.add('on'); map.getContainer().style.cursor = ln ? '' : 'crosshair';
+  render();
+  syncPlace();
+}
+function syncPlace(){
+  const p = pending; if (!p) return;
+  if (p.type === 'zone') {
+    $('placeH').innerHTML = (p.zone ? `Zone <b>${p.zone}</b> chosen. Tap another zone to change.` : 'Tap a zone on the map to choose it.') + '<br>Hider says same zone: eliminate off-zone. Different zone: eliminate in-zone.';
+    $('confirm').disabled = !p.zone;
+  } else if (p.type === 'line') {
+    $('placeH').innerHTML = (p.line ? `Line <b>${p.line}</b> chosen.` : 'Choose a train line.') + '<br>Hider says same line: eliminate off-line. Different line: eliminate on-line.';
+    $('confirm').disabled = !p.line;
+  } else if (p.type === 'radar') {
+    $('placeH').textContent = 'Tap the map to place the radar centre. Tap again to move it.';
+    $('confirm').disabled = !p.center;
+  } else {
+    if (!p.a) $('placeH').textContent = 'Tap the map to place the start point.';
+    else if (!p.b) $('placeH').textContent = 'Now tap the end point.';
+    else {
+      const d = thermoLen(p), ok = thermoOk(p);
+      $('placeH').innerHTML = `<b style="color:${ok ? COLORS.thermoOk : COLORS.thermoBad}">${fmt(d)}</b> measured, target ${p.r} km. Drag a point to adjust.<br>Hotter: eliminate start side. Colder: eliminate end side.`;
+    }
+    $('confirm').disabled = !(p.a && p.b);
+  }
+}
+function setElim(v){ if (pending) pending.elim = v; document.querySelectorAll('#elim button').forEach(b => b.classList.toggle('sel', b.dataset.v === v)); if (isLive(pending)) render(); }
+$('lineSel').onclick = e => {
+  const b = e.target.closest('.chip'); if (!b || !pending) return;
+  pending.line = b.dataset.l;
+  document.querySelectorAll('#lineSel .chip').forEach(c => c.classList.toggle('sel', c === b));
+  syncPlace(); render();
+};
+$('elim').onclick = e => { if (e.target.dataset.v) setElim(e.target.dataset.v); };
+function addPin(label, key){
+  const m = L.marker(pending[key], {draggable: true, icon: L.divIcon({className: '', iconSize: [30, 30], iconAnchor: [15, 15], html: `<div class="pin">${label}</div>`})}).addTo(gPins);
+  m.on('drag', e => { pending[key] = e.target.getLatLng(); syncPlace(); renderSoon(); });
+  m.on('dragend', () => { syncPlace(); render(); });
+}
+function endPlace(){
+  pending = null; gPins.clearLayers(); pins = {}; openSheet(null);
+  $('lineSel').classList.remove('open'); ['radarBtn', 'thermoBtn', 'matchBtn'].forEach(b => $(b).classList.remove('on')); map.getContainer().style.cursor = ''; render();
+}
+map.on('click', e => {
+  if (!pending) { closeMenus(); return; }
+  if (pending.type === 'line') return;
+  if (pending.type === 'zone') { const z = zoneAt(e.latlng); if (z) { pending.zone = z; syncPlace(); render(); } return; }
+  if (pending.type === 'radar') pending.center = e.latlng;
+  else if (!pending.a) { pending.a = e.latlng; addPin('S', 'a'); }
+  else if (!pending.b) { pending.b = e.latlng; addPin('E', 'b'); }
+  else return;
+  syncPlace(); render();
+});
+$('cancel').onclick = endPlace;
+$('confirm').onclick = () => {
+  const p = pending; if (!p || $('confirm').disabled) return;
+  const ll = x => [x.lat, x.lng];
+  effects.push(p.type === 'zone' ? {id: Date.now(), type: 'zone', zone: p.zone, elim: p.elim, on: true} : p.type === 'line' ? {id: Date.now(), type: 'line', line: p.line, elim: p.elim, on: true} : p.type === 'radar'
+    ? {id: Date.now(), type: 'radar', r: p.r, center: ll(p.center), elim: p.elim, on: true}
+    : {id: Date.now(), type: 'thermo', r: p.r, a: ll(p.a), b: ll(p.b), elim: p.elim, on: true});
+  save('hs3_fx', effects); endPlace(); renderList();
+};
+
+// ---- my location ----
+// `me` is {ll, acc} (a Leaflet LatLng and the accuracy in metres) once a fix arrives, else null. Later features can read it.
+let me = null, watchId = null, centerOnFix = false;
+function toast(msg){ const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', 5000); }
+function drawMe(){
+  gMe.clearLayers();
+  if (!me) return;
+  L.circle(me.ll, {radius: me.acc, color: COLORS.me, weight: 1, fillColor: COLORS.me, fillOpacity: 0.12, interactive: false}).addTo(gMe);
+  L.circleMarker(me.ll, {radius: 8, color: '#fff', weight: 3, fillColor: COLORS.me, fillOpacity: 1, interactive: false}).addTo(gMe);
+}
+function syncMe(){ $('showMe').checked = watchId !== null; $('locBtn').classList.toggle('on', watchId !== null && !!me); }
+function setTracking(on){
+  if (on && watchId === null) {
+    if (!navigator.geolocation) { toast('This browser has no location support.'); return syncMe(); }
+    if (!window.isSecureContext) { toast('Location only works over https (for example GitHub Pages), not from a local file.'); return syncMe(); }
+    watchId = navigator.geolocation.watchPosition(onFix, onErr, {enableHighAccuracy: true, maximumAge: 5000, timeout: 20000});
+  } else if (!on && watchId !== null) {
+    navigator.geolocation.clearWatch(watchId); watchId = null; me = null; drawMe();
+  }
+  syncMe();
+}
+function onFix(p){
+  me = {ll: L.latLng(p.coords.latitude, p.coords.longitude), acc: p.coords.accuracy};
+  drawMe(); syncMe();
+  if (centerOnFix) { centerOnFix = false; map.setView(me.ll, Math.max(map.getZoom(), LOCATION_ZOOM)); }
+}
+function onErr(e){
+  if (e.code === 1) { toast('Location permission denied. Allow it in your browser or site settings, then try again.'); setTracking(false); }
+  else toast('Waiting for a location fix...');
+}
+const LocCtl = L.Control.extend({options: {position: 'bottomright'}, onAdd(){
+  const b = L.DomUtil.create('button', 'btn locbtn'); b.id = 'locBtn'; b.textContent = '📍'; b.setAttribute('aria-label', 'My location');
+  L.DomEvent.disableClickPropagation(b);
+  b.onclick = () => { if (me) map.setView(me.ll, Math.max(map.getZoom(), LOCATION_ZOOM)); else { centerOnFix = true; setTracking(true); } };
+  return b;
+}});
+new LocCtl().addTo(map);
+$('showMe').onchange = () => setTracking($('showMe').checked);
+if (SHOW_LOCATION_DEFAULT) setTracking(true);
+
+render();
+map.fitBounds(L.latLngBounds(ST.map(s => s.ll)), {padding: [30, 30]});
+</script>
+</body>
+</html>
