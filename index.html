@@ -41,6 +41,8 @@
   #toast{left:8px;right:8px;top:calc(110px + env(safe-area-inset-top,0px));max-width:440px;background:var(--ink);color:#fff;border-radius:10px;padding:8px 12px;font-size:14px;display:none;pointer-events:none}
   .stad{position:relative;width:30px;height:30px}.stad i{display:flex;align-items:center;justify-content:center;width:30px;height:30px;box-sizing:border-box;border-radius:50%;background:#fff;border:2px solid var(--stad);font-style:normal;font-size:16px;box-shadow:0 1px 5px #0005}
   .stad b{position:absolute;left:34px;top:5px;white-space:nowrap;background:var(--panel);border-radius:6px;padding:1px 6px;font:600 12px system-ui;box-shadow:0 1px 3px #0003}.stad.sel i{background:var(--stad)}
+  .stad.m i{border-color:var(--meas)}.stad.m b{left:34px}
+  .dist{display:none;align-items:center;gap:8px;margin:8px 0}.dist.open{display:flex}.dist input{flex:1;min-width:0;font:inherit;font-size:16px;padding:8px 10px;border:1px solid #1d2b2a55;border-radius:8px}
   h4{margin:0;display:flex;justify-content:space-between;align-items:center}
 </style>
 </head>
@@ -59,6 +61,10 @@
     <button class="btn" id="matchBtn">🔗 Matching ▾</button>
     <div class="menu" id="matchMenu"><button data-m="line">🚆 Train line</button><button data-m="zone">🎫 Fare zone</button><button data-m="stadium">⚽ Football</button></div>
   </div>
+  <div style="position:relative">
+    <button class="btn" id="measureBtn">📏 Measuring ▾</button>
+    <div class="menu" id="measureMenu"></div>
+  </div>
   <button class="btn" id="fxBtn">Effects (<span id="fxN">0</span>)</button>
   <button class="btn" id="cfgBtn" aria-label="Settings">⚙</button>
 </div>
@@ -69,6 +75,7 @@
   <b id="placeT">Radar</b>
   <div class="muted" id="placeH"></div>
   <div class="acts" id="locRow" style="display:none;margin:8px 0"><button class="btn" id="useLoc">📍 Use my location</button></div>
+  <label class="dist" id="distRow">Your distance <input id="dist" type="text" inputmode="decimal" placeholder="0.0" autocomplete="off"> km</label>
   <div class="chips" id="lineSel"></div>
   <div class="seg" id="elim"></div>
   <div class="acts"><button class="btn" id="cancel">Cancel</button><button class="btn go" id="confirm" disabled>Confirm</button></div>
@@ -227,6 +234,12 @@ Gladsaxe Stadium|55.73287|12.49677
 Hvidovre Stadion|55.63129|12.48284
 Vanløse Idrætspark|55.68630|12.47690
 `;
+// name|lat|lng, from Jet Lag - Measuring - Points.csv
+const MEASURE_DATA = `
+Opera|55.68217|12.60007
+Zoo|55.67169|12.52344
+Grundtvigs Church|55.71662|12.53402
+`;
 // ---- COLOURS: change these to restyle the app ----
 const COLORS = {
   area:      '#f97316',  // play area shading (stations still in play)
@@ -247,6 +260,7 @@ const COLORS = {
   },
   zoneBorder: '#1f2937',   // lines between fare zones
   stadium:   '#e11d48',  // football stadium markers and the highlighted stations
+  measure:   '#9333ea',  // measuring circles, preview and landmark markers
   me:        '#2563eb',  // your location dot and accuracy circle
   ink:       '#1d2b2a',  // text, selected buttons and toggles
   go:        '#c2410c',  // Confirm button
@@ -261,6 +275,8 @@ const SHOW_LINES_DEFAULT = true;           // are the train lines drawn when the
 const LINE_WEIGHT = 3;                     // train line thickness (the chosen line is drawn 2 thicker)
 const LINE_OPACITY = 0.8;                  // train line opacity
 const SHOW_LOCATION_DEFAULT = false;       // start tracking your location when the app opens? (the browser asks for permission; also a switch in settings)
+const MEASURE_LABELS = {'Grundtvigs Church': 'Church'};   // menu names for measuring points (default: the name in the CSV)
+const MEASURE_ICONS = {Opera: '🎭', Zoo: '🦁', 'Grundtvigs Church': '⛪'};   // menu and map icons for measuring points
 const LOCATION_ZOOM = 15;                  // zoom level used when the location button recentres the map
 const SHOW_ZONES_DEFAULT = false;          // are the fare zones drawn when the app opens? (also a switch in settings)
 const ZONE_FILL_OPACITY = 0.3;             // fare zone shading opacity
@@ -272,11 +288,14 @@ const LINE_DIM_OPACITY = 0.2;              // opacity of the other lines while o
 for (const k of ['ink', 'go', 'panel', 'muted']) document.documentElement.style.setProperty('--' + k, COLORS[k]);
 document.documentElement.style.setProperty('--pin', COLORS.thermoPin);
 document.documentElement.style.setProperty('--stad', COLORS.stadium);
+document.documentElement.style.setProperty('--meas', COLORS.measure);
 
 const ST = DATA.trim().split('\n').map((l, i) => { const [name, a, o, zone] = l.split('|'); return {i, name, zone, lat: +a, lng: +o, ll: L.latLng(+a, +o)}; });
 const STAD = STADIUMS_DATA.trim().split('\n').map(l => { const [name, a, o] = l.split('|'); return {name, ll: L.latLng(+a, +o)}; });
 const STAD_I = Object.fromEntries(STAD.map((x, i) => [x.name, i]));
 for (const s of ST) s.stad = STAD.reduce((b, x, i) => s.ll.distanceTo(x.ll) < s.ll.distanceTo(STAD[b].ll) ? i : b, 0);   // each station's closest stadium
+const MEAS = {};
+for (const l of MEASURE_DATA.trim().split('\n')) { const [name, a, o] = l.split('|'); MEAS[name] = {name, ll: L.latLng(+a, +o), icon: MEASURE_ICONS[name] || '📍', label: MEASURE_LABELS[name] || name}; }
 const LINES = {}, LINE_SET = {};
 for (const l of LINES_DATA.trim().split('\n')) { const [id, idx] = l.split('|'); LINES[id] = idx.split(',').map(n => ST[n - 1].ll); LINE_SET[id] = new Set(idx.split(',').map(n => n - 1)); }
 const $ = id => document.getElementById(id);
@@ -285,7 +304,7 @@ const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } cat
 
 const OLD_LINES = {A: 'A/E', B: 'B/Bx', C: 'C/H'};   // saved effects from before the express lines were merged
 let hideR = load('hs3_hr', 0.5), effects = load('hs3_fx', []), pending = null, pins = {}, showLines = SHOW_LINES_DEFAULT, showZones = SHOW_ZONES_DEFAULT, zoneGeo = null, zoneKey = '';
-effects = effects.map(e => e.type === 'line' && OLD_LINES[e.line] ? {...e, line: OLD_LINES[e.line]} : e).filter(e => (e.type !== 'line' || LINE_SET[e.line]) && (e.type !== 'stadium' || e.stadium in STAD_I));
+effects = effects.map(e => e.type === 'line' && OLD_LINES[e.line] ? {...e, line: OLD_LINES[e.line]} : e).filter(e => (e.type !== 'line' || LINE_SET[e.line]) && (e.type !== 'stadium' || e.stadium in STAD_I) && (e.type !== 'measure' || e.point in MEAS));
 
 // ---- map ----
 const map = L.map('map', {zoomControl: false, preferCanvas: true}).setView([55.69, 12.5], 11);
@@ -375,11 +394,13 @@ function drawZones(){
 // thermo: elim 'start' | 'end' (stations closer to the start / end point are eliminated)
 // line:   elim 'off' | 'on' (stations not on / on the chosen train line are eliminated)
 // zone:   elim 'off' | 'on' (stations not in / in the chosen fare zone are eliminated)
+// measure: elim 'outside' | 'inside' (stations further / closer to the point than the seeker's distance are eliminated)
 // stadium: elim 'off' | 'on' (stations whose closest stadium is not / is the chosen one are eliminated)
 const thermoLen = e => L.latLng(e.a).distanceTo(e.b);
 const thermoOk = e => Math.abs(thermoLen(e) - e.r * 1000) <= e.r * 1000 * THERMO_TOLERANCE;
-const isLive = p => p && (p.type === 'radar' ? p.center : p.type === 'line' ? p.line : p.type === 'zone' ? p.zone : p.type === 'stadium' ? p.stadium : p.a && p.b);
+const isLive = p => p && (p.type === 'radar' ? p.center : p.type === 'line' ? p.line : p.type === 'zone' ? p.zone : p.type === 'stadium' ? p.stadium : p.type === 'measure' ? p.d : p.a && p.b);
 function passes(s, e){
+  if (e.type === 'measure') return (s.ll.distanceTo(MEAS[e.point].ll) <= e.d * 1000) === (e.elim === 'outside');
   if (e.type === 'stadium') return (s.stad === STAD_I[e.stadium]) === (e.elim === 'off');
   if (e.type === 'zone') return (s.zone === e.zone) === (e.elim === 'off');
   if (e.type === 'line') return LINE_SET[e.line].has(s.i) === (e.elim === 'off');
@@ -428,10 +449,21 @@ function render(){
   for (const e of effects) if (e.on) {
     if (e.type === 'thermo') { drawThermo(e, 3, true); continue; }
     if (e.type === 'line' || e.type === 'zone' || e.type === 'stadium') continue;
+    if (e.type === 'measure') {
+      const c = MEAS[e.point].ll;
+      L.circle(c, {radius: e.d * 1000, color: COLORS.measure, weight: 1.5, fill: false, interactive: false}).addTo(gFx);
+      L.circleMarker(c, {radius: 2, color: COLORS.measure, fillColor: COLORS.measure, fillOpacity: 1, interactive: false}).addTo(gFx);
+      continue;
+    }
     L.circle(e.center, {radius: e.r * 1000, color: COLORS.radar, weight: 1.5, fill: false, interactive: false}).addTo(gFx);
     L.circleMarker(e.center, {radius: 2, color: COLORS.radar, fillColor: COLORS.radar, fillOpacity: 1, interactive: false}).addTo(gFx);
   }
   if (pending && pending.type === 'stadium' && pending.stadium) for (const s of ST) if (s.stad === STAD_I[pending.stadium]) L.circleMarker(s.ll, {radius: 8, color: COLORS.stadium, weight: 2.5, fill: false, interactive: false}).addTo(gFx);
+  if (pending && pending.type === 'measure') {
+    const m = MEAS[pending.point];
+    L.marker(m.ll, {icon: L.divIcon({className: '', iconSize: [30, 30], iconAnchor: [15, 15], html: `<div class="stad m"><i>${m.icon}</i><b>${m.label}</b></div>`}), interactive: false, keyboard: false}).addTo(gFx);
+    if (live) L.circle(m.ll, {radius: live.d * 1000, color: COLORS.measure, weight: 2.5, dashArray: '6 4', fill: false, interactive: false}).addTo(gFx);
+  }
   if (live && live.type === 'radar') {
     L.circle(live.center, {radius: live.r * 1000, color: COLORS.radar, weight: 2.5, dashArray: '6 4', fill: false, interactive: false}).addTo(gFx);
     L.circleMarker(live.center, {radius: 5, color: COLORS.radar, fillColor: COLORS.radar, fillOpacity: 1, interactive: false}).addTo(gFx);
@@ -457,13 +489,13 @@ function renderList(){
   $('list').innerHTML = effects.length ? '' : '<div class="muted">No effects yet. Add one from the menu.</div>';
   for (const e of effects) {
     const th = e.type === 'thermo', ln = e.type === 'line', d = document.createElement('div'); d.className = 'fx' + (e.on ? '' : ' off');
-    const zn = e.type === 'zone', sd = e.type === 'stadium';
-    const name = sd ? `⚽ Football: ${e.stadium}` : zn ? `🎫 Fare zone ${e.zone}` : ln ? `🚆 Train line ${e.line}` : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${e.r} km`;
-    const sub = sd ? (e.elim === 'off' ? "Other stadiums'" : "This stadium's") : zn ? (e.elim === 'off' ? 'Off-zone' : 'In-zone') : ln ? (e.elim === 'off' ? 'Off-line' : 'On-line') : th ? (e.elim === 'start' ? 'Start side' : 'End side') : (e.elim === 'outside' ? 'Outside' : 'Inside');
+    const zn = e.type === 'zone', sd = e.type === 'stadium', ms = e.type === 'measure';
+    const name = ms ? `${MEAS[e.point].icon} Measuring: ${MEAS[e.point].label} ${e.d} km` : sd ? `⚽ Football: ${e.stadium}` : zn ? `🎫 Fare zone ${e.zone}` : ln ? `🚆 Train line ${e.line}` : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${e.r} km`;
+    const sub = ms ? (e.elim === 'outside' ? 'Further' : 'Closer') : sd ? (e.elim === 'off' ? "Other stadiums'" : "This stadium's") : zn ? (e.elim === 'off' ? 'Off-zone' : 'In-zone') : ln ? (e.elim === 'off' ? 'Off-line' : 'On-line') : th ? (e.elim === 'start' ? 'Start side' : 'End side') : (e.elim === 'outside' ? 'Outside' : 'Inside');
     d.innerHTML = `<input type="checkbox" data-a="tog" ${e.on ? 'checked' : ''}><span>${name}<br><small>${sub} stations eliminated</small></span><button data-a="flip" title="Invert">⇄</button><button data-a="del" title="Delete">✕</button>`;
     d.onclick = ev => {
       const a = ev.target.dataset.a;
-      if (!a) { map.fitBounds(sd ? L.latLngBounds([STAD[STAD_I[e.stadium]].ll, ...ST.filter(s => s.stad === STAD_I[e.stadium]).map(s => s.ll)]) : zn ? L.latLngBounds(ST.filter(s => s.zone === e.zone).map(s => s.ll)) : ln ? L.latLngBounds(LINES[e.line]) : th ? L.latLngBounds([e.a, e.b]) : L.circle(e.center, {radius: e.r * 1000}).getBounds(), {padding: [60, 60], maxZoom: 17}); return; }
+      if (!a) { map.fitBounds(ms ? L.circle(MEAS[e.point].ll, {radius: e.d * 1000}).getBounds() : sd ? L.latLngBounds([STAD[STAD_I[e.stadium]].ll, ...ST.filter(s => s.stad === STAD_I[e.stadium]).map(s => s.ll)]) : zn ? L.latLngBounds(ST.filter(s => s.zone === e.zone).map(s => s.ll)) : ln ? L.latLngBounds(LINES[e.line]) : th ? L.latLngBounds([e.a, e.b]) : L.circle(e.center, {radius: e.r * 1000}).getBounds(), {padding: [60, 60], maxZoom: 17}); return; }
       if (a === 'tog') e.on = !e.on;
       if (a === 'flip') e.elim = flipOf[e.elim];
       if (a === 'del') { if (!confirm(`Delete ${name.replace(/^\S+ /, '')}?`)) return; effects = effects.filter(x => x !== e); }
@@ -475,7 +507,7 @@ function renderList(){
 
 // ---- sheets & menus ----
 const sheets = ['place', 'fx', 'cfgP'];
-const closeMenus = () => ['radarMenu', 'thermoMenu', 'matchMenu'].forEach(m => $(m).classList.remove('open'));
+const closeMenus = () => ['radarMenu', 'thermoMenu', 'matchMenu', 'measureMenu'].forEach(m => $(m).classList.remove('open'));
 function openSheet(id){ sheets.forEach(s => $(s).classList.toggle('open', s === id)); closeMenus(); }
 const busy = () => !!pending;
 
@@ -484,6 +516,9 @@ function setupMenu(btn, menu, list, type){
   $(btn).onclick = () => { if (busy()) return; const o = $(menu).classList.contains('open'); closeMenus(); $(menu).classList.toggle('open', !o); };
   $(menu).onclick = e => { const r = e.target.dataset.r; if (r) startPlace(type, +r); };
 }
+$('measureMenu').innerHTML = Object.values(MEAS).map(m => `<button data-m="${m.name}">${m.icon} ${m.label}</button>`).join('');
+$('measureBtn').onclick = () => { if (busy()) return; const o = $('measureMenu').classList.contains('open'); closeMenus(); $('measureMenu').classList.toggle('open', !o); };
+$('measureMenu').onclick = e => { const n = e.target.dataset.m; if (n) startPlace('measure', n); };
 setupMenu('radarBtn', 'radarMenu', RADII, 'radar');
 setupMenu('thermoBtn', 'thermoMenu', THERMO_LENGTHS, 'thermo');
 $('matchBtn').onclick = () => { if (busy()) return; const o = $('matchMenu').classList.contains('open'); closeMenus(); $('matchMenu').classList.toggle('open', !o); };
@@ -505,10 +540,12 @@ $('hr').oninput = () => { hideR = +$('hr').value; $('hrv').textContent = hideR +
 // ---- placement mode (radar: tap a centre; thermometer: tap start, tap end, then drag either) ----
 const fmt = m => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(2) + ' km';
 function startPlace(type, r){
-  const th = type === 'thermo', ln = type === 'line', zn = type === 'zone', sd = type === 'stadium';
-  pending = sd ? {type, stadium: null, elim: 'off'} : zn ? {type, zone: null, elim: 'off'} : ln ? {type, line: null, elim: 'off'} : th ? {type, r, a: null, b: null, elim: 'start'} : {type, r, center: null, elim: 'outside'};
+  const th = type === 'thermo', ln = type === 'line', zn = type === 'zone', sd = type === 'stadium', ms = type === 'measure';
+  pending = ms ? {type, point: r, d: null, elim: 'outside'} : sd ? {type, stadium: null, elim: 'off'} : zn ? {type, zone: null, elim: 'off'} : ln ? {type, line: null, elim: 'off'} : th ? {type, r, a: null, b: null, elim: 'start'} : {type, r, center: null, elim: 'outside'};
   gPins.clearLayers(); pins = {};
-  $('elim').innerHTML = sd
+  $('elim').innerHTML = ms
+    ? '<button data-v="outside">Eliminate further</button><button data-v="inside">Eliminate closer</button>'
+    : sd
     ? '<button data-v="off">Eliminate others</button><button data-v="on">Eliminate these</button>'
     : zn
     ? '<button data-v="off">Eliminate off-zone</button><button data-v="on">Eliminate in-zone</button>'
@@ -520,15 +557,19 @@ function startPlace(type, r){
   $('lineSel').classList.toggle('open', ln);
   if (ln) $('lineSel').innerHTML = Object.keys(LINES).map(id => `<button class="chip" data-l="${id}"><i style="background:${COLORS.lines[id]}"></i>${id}</button>`).join('');
   openSheet('place'); setElim(pending.elim);
-  $('locRow').style.display = sd ? '' : 'none';
-  $('placeT').textContent = sd ? '⚽ Matching: football' : zn ? '🎫 Matching: fare zone' : ln ? '🚆 Matching: train line' : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${r} km`;
-  $(ln || zn || sd ? 'matchBtn' : th ? 'thermoBtn' : 'radarBtn').classList.add('on'); map.getContainer().style.cursor = ln || sd ? '' : 'crosshair';
+  $('locRow').style.display = sd || ms ? '' : 'none'; $('distRow').classList.toggle('open', ms); $('dist').value = '';
+  $('placeT').textContent = ms ? `📏 Measuring: ${MEAS[r].label}` : sd ? '⚽ Matching: football' : zn ? '🎫 Matching: fare zone' : ln ? '🚆 Matching: train line' : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${r} km`;
+  $(ms ? 'measureBtn' : ln || zn || sd ? 'matchBtn' : th ? 'thermoBtn' : 'radarBtn').classList.add('on'); map.getContainer().style.cursor = ln || sd || ms ? '' : 'crosshair';
   render();
   syncPlace();
 }
 function syncPlace(){
   const p = pending; if (!p) return;
-  if (p.type === 'stadium') {
+  if (p.type === 'measure') {
+    const m = MEAS[p.point];
+    $('placeH').innerHTML = (p.d ? `Distance <b>${p.d} km</b> to ${m.label}.` : `Enter your distance to ${m.label} in km, or use your location.`) + '<br>Hider closer: eliminate further. Hider further: eliminate closer.';
+    $('confirm').disabled = !p.d;
+  } else if (p.type === 'stadium') {
     $('placeH').innerHTML = (p.stadium ? `Stadium <b>${p.stadium}</b> chosen. Its stations are ringed.` : 'Tap a stadium on the map, or use your location.') + '<br>Hider says same closest stadium: eliminate others. Different: eliminate these.';
     $('confirm').disabled = !p.stadium;
   } else if (p.type === 'zone') {
@@ -565,12 +606,12 @@ function addPin(label, key){
 }
 function endPlace(){
   pending = null; gPins.clearLayers(); pins = {}; openSheet(null);
-  $('lineSel').classList.remove('open'); $('locRow').style.display = 'none'; ['radarBtn', 'thermoBtn', 'matchBtn'].forEach(b => $(b).classList.remove('on')); map.getContainer().style.cursor = ''; render();
+  $('lineSel').classList.remove('open'); $('locRow').style.display = 'none'; $('distRow').classList.remove('open'); ['radarBtn', 'thermoBtn', 'matchBtn', 'measureBtn'].forEach(b => $(b).classList.remove('on')); map.getContainer().style.cursor = ''; render();
 }
 map.on('click', e => {
   if (!pending) { closeMenus(); return; }
   if (pending.type === 'line') return;
-  if (pending.type === 'stadium') return;
+  if (pending.type === 'stadium' || pending.type === 'measure') return;
   if (pending.type === 'zone') { const z = zoneAt(e.latlng); if (z) { pending.zone = z; syncPlace(); render(); } return; }
   if (pending.type === 'radar') pending.center = e.latlng;
   else if (!pending.a) { pending.a = e.latlng; addPin('S', 'a'); }
@@ -582,7 +623,7 @@ $('cancel').onclick = endPlace;
 $('confirm').onclick = () => {
   const p = pending; if (!p || $('confirm').disabled) return;
   const ll = x => [x.lat, x.lng];
-  effects.push(p.type === 'stadium' ? {id: Date.now(), type: 'stadium', stadium: p.stadium, elim: p.elim, on: true} : p.type === 'zone' ? {id: Date.now(), type: 'zone', zone: p.zone, elim: p.elim, on: true} : p.type === 'line' ? {id: Date.now(), type: 'line', line: p.line, elim: p.elim, on: true} : p.type === 'radar'
+  effects.push(p.type === 'measure' ? {id: Date.now(), type: 'measure', point: p.point, d: p.d, elim: p.elim, on: true} : p.type === 'stadium' ? {id: Date.now(), type: 'stadium', stadium: p.stadium, elim: p.elim, on: true} : p.type === 'zone' ? {id: Date.now(), type: 'zone', zone: p.zone, elim: p.elim, on: true} : p.type === 'line' ? {id: Date.now(), type: 'line', line: p.line, elim: p.elim, on: true} : p.type === 'radar'
     ? {id: Date.now(), type: 'radar', r: p.r, center: ll(p.center), elim: p.elim, on: true}
     : {id: Date.now(), type: 'thermo', r: p.r, a: ll(p.a), b: ll(p.b), elim: p.elim, on: true});
   save('hs3_fx', effects); endPlace(); renderList();
@@ -626,10 +667,18 @@ const LocCtl = L.Control.extend({options: {position: 'bottomright'}, onAdd(){
   return b;
 }});
 new LocCtl().addTo(map);
+$('dist').oninput = () => {
+  if (!pending || pending.type !== 'measure') return;
+  const v = parseFloat($('dist').value.replace(',', '.'));
+  pending.d = v > 0 ? v : null;
+  syncPlace(); renderSoon();
+};
 $('useLoc').onclick = () => {
   const pick = () => {
-    if (!pending || pending.type !== 'stadium') return;
-    pending.stadium = STAD.reduce((b, x) => me.ll.distanceTo(x.ll) < me.ll.distanceTo(b.ll) ? x : b).name;
+    if (!pending) return;
+    if (pending.type === 'stadium') pending.stadium = STAD.reduce((b, x) => me.ll.distanceTo(x.ll) < me.ll.distanceTo(b.ll) ? x : b).name;
+    else if (pending.type === 'measure') { pending.d = Math.max(0.01, +(me.ll.distanceTo(MEAS[pending.point].ll) / 1000).toFixed(2)); $('dist').value = pending.d; }
+    else return;
     syncPlace(); render();
   };
   if (me) pick(); else { locAction = pick; setTracking(true); toast('Getting your location...'); }
