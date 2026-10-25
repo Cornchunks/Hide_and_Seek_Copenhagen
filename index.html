@@ -240,6 +240,23 @@ Opera|55.68217|12.60007
 Zoo|55.67169|12.52344
 Grundtvigs Church|55.71662|12.53402
 `;
+// lat|lng outline of the lakes, from Jet Lag - Measuring - Lakes.csv (not closed: the app joins the last point back to the first)
+const LAKES_DATA = `
+55.67396|12.55541
+55.68221|12.55764
+55.68722|12.56254
+55.69201|12.56937
+55.69388|12.57230
+55.69549|12.57371
+55.69762|12.57845
+55.69611|12.57945
+55.69445|12.57596
+55.69293|12.57472
+55.69080|12.57157
+55.68614|12.56533
+55.68114|12.56049
+55.67449|12.55869
+`;
 // ---- COLOURS: change these to restyle the app ----
 const COLORS = {
   area:      '#f97316',  // play area shading (stations still in play)
@@ -276,7 +293,8 @@ const LINE_WEIGHT = 3;                     // train line thickness (the chosen l
 const LINE_OPACITY = 0.8;                  // train line opacity
 const SHOW_LOCATION_DEFAULT = false;       // start tracking your location when the app opens? (the browser asks for permission; also a switch in settings)
 const MEASURE_LABELS = {'Grundtvigs Church': 'Church'};   // menu names for measuring points (default: the name in the CSV)
-const MEASURE_ICONS = {Opera: '🎭', Zoo: '🦁', 'Grundtvigs Church': '⛪'};   // menu and map icons for measuring points
+const MEASURE_ICONS = {Opera: '🎭', Zoo: '🦁', 'Grundtvigs Church': '⛪', Lakes: '💧'};   // menu and map icons for measuring points
+const MEASURE_AREA_OPACITY = 0.25;         // shading of the 'within this distance of the lakes' area
 const LOCATION_ZOOM = 15;                  // zoom level used when the location button recentres the map
 const SHOW_ZONES_DEFAULT = false;          // are the fare zones drawn when the app opens? (also a switch in settings)
 const ZONE_FILL_OPACITY = 0.3;             // fare zone shading opacity
@@ -296,6 +314,22 @@ const STAD_I = Object.fromEntries(STAD.map((x, i) => [x.name, i]));
 for (const s of ST) s.stad = STAD.reduce((b, x, i) => s.ll.distanceTo(x.ll) < s.ll.distanceTo(STAD[b].ll) ? i : b, 0);   // each station's closest stadium
 const MEAS = {};
 for (const l of MEASURE_DATA.trim().split('\n')) { const [name, a, o] = l.split('|'); MEAS[name] = {name, ll: L.latLng(+a, +o), icon: MEASURE_ICONS[name] || '📍', label: MEASURE_LABELS[name] || name}; }
+{ // the lakes are measured to the whole outline, not to a single point
+  const ring = LAKES_DATA.trim().split('\n').map(l => { const [a, o] = l.split('|'); return L.latLng(+a, +o); });
+  MEAS.Lakes = {name: 'Lakes', ring, ll: L.latLng(ring.reduce((t, p) => t + p.lat, 0) / ring.length, ring.reduce((t, p) => t + p.lng, 0) / ring.length), icon: MEASURE_ICONS.Lakes || '📍', label: MEASURE_LABELS.Lakes || 'Lakes'};
+}
+const MK = Math.cos(55.69 * Math.PI / 180);
+// distance in metres from a point to a measuring target (a single point, or the nearest spot on the lake outline)
+function measDist(m, ll){
+  if (!m.ring) return ll.distanceTo(m.ll);
+  const px = ll.lng * MK * 111320, py = ll.lat * 111320; let best = Infinity;
+  m.ring.forEach((a, i) => {
+    const b = m.ring[(i + 1) % m.ring.length], ax = a.lng * MK * 111320, ay = a.lat * 111320, dx = b.lng * MK * 111320 - ax, dy = b.lat * 111320 - ay;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1)));
+    best = Math.min(best, Math.hypot(px - ax - t * dx, py - ay - t * dy));
+  });
+  return best;
+}
 const LINES = {}, LINE_SET = {};
 for (const l of LINES_DATA.trim().split('\n')) { const [id, idx] = l.split('|'); LINES[id] = idx.split(',').map(n => ST[n - 1].ll); LINE_SET[id] = new Set(idx.split(',').map(n => n - 1)); }
 const $ = id => document.getElementById(id);
@@ -330,6 +364,8 @@ useBase(0);
 map.createPane('area').style.opacity = 0.3;
 map.getPane('area').style.zIndex = 300;
 map.createPane('zones').style.zIndex = 310;
+map.createPane('measure').style.opacity = MEASURE_AREA_OPACITY;
+map.getPane('measure').style.zIndex = 305;
 const gArea = L.layerGroup().addTo(map), gLines = L.layerGroup().addTo(map), gZones = L.layerGroup().addTo(map), gFx = L.layerGroup().addTo(map), gDots = L.layerGroup().addTo(map), gPins = L.layerGroup().addTo(map), gMe = L.layerGroup().addTo(map), gStad = L.layerGroup().addTo(map);
 
 // ---- fare zones: every point belongs to the zone of its nearest station ----
@@ -400,7 +436,7 @@ const thermoLen = e => L.latLng(e.a).distanceTo(e.b);
 const thermoOk = e => Math.abs(thermoLen(e) - e.r * 1000) <= e.r * 1000 * THERMO_TOLERANCE;
 const isLive = p => p && (p.type === 'radar' ? p.center : p.type === 'line' ? p.line : p.type === 'zone' ? p.zone : p.type === 'stadium' ? p.stadium : p.type === 'measure' ? p.d : p.a && p.b);
 function passes(s, e){
-  if (e.type === 'measure') return (s.ll.distanceTo(MEAS[e.point].ll) <= e.d * 1000) === (e.elim === 'outside');
+  if (e.type === 'measure') return (measDist(MEAS[e.point], s.ll) <= e.d * 1000) === (e.elim === 'outside');
   if (e.type === 'stadium') return (s.stad === STAD_I[e.stadium]) === (e.elim === 'off');
   if (e.type === 'zone') return (s.zone === e.zone) === (e.elim === 'off');
   if (e.type === 'line') return LINE_SET[e.line].has(s.i) === (e.elim === 'off');
@@ -422,6 +458,17 @@ function drawThermo(e, w, ends){
   const col = thermoOk(e) ? COLORS.thermoOk : COLORS.thermoBad;
   L.polyline([e.a, e.b], {color: col, weight: w, interactive: false}).addTo(gFx);
   if (ends) for (const p of [e.a, e.b]) L.circleMarker(p, {radius: 3, color: col, fillColor: col, fillOpacity: 1, interactive: false}).addTo(gFx);
+}
+// shaded area within `dKm` of the lake outline, built from one capsule per outline segment (drawn in a pane whose opacity is set as a whole, so overlaps merge)
+function drawBuffer(m, dKm, group){
+  const r = dKm / 111.32, n = m.ring.length;
+  m.ring.forEach((a, i) => {
+    const b = m.ring[(i + 1) % n], th = Math.atan2(b.lat - a.lat, (b.lng - a.lng) * MK), pts = [];
+    for (let k = 0; k <= 12; k++) { const t = th - Math.PI / 2 + Math.PI * k / 12; pts.push([b.lat + r * Math.sin(t), b.lng + r * Math.cos(t) / MK]); }
+    for (let k = 0; k <= 12; k++) { const t = th + Math.PI / 2 + Math.PI * k / 12; pts.push([a.lat + r * Math.sin(t), a.lng + r * Math.cos(t) / MK]); }
+    L.polygon(pts, {pane: 'measure', stroke: false, fillColor: COLORS.measure, fillOpacity: 1, interactive: false}).addTo(group);
+  });
+  L.polygon(m.ring, {color: COLORS.measure, weight: 2, fill: false, interactive: false}).addTo(group);
 }
 let stadKey = '';
 function drawStadiums(){
@@ -450,9 +497,10 @@ function render(){
     if (e.type === 'thermo') { drawThermo(e, 3, true); continue; }
     if (e.type === 'line' || e.type === 'zone' || e.type === 'stadium') continue;
     if (e.type === 'measure') {
-      const c = MEAS[e.point].ll;
-      L.circle(c, {radius: e.d * 1000, color: COLORS.measure, weight: 1.5, fill: false, interactive: false}).addTo(gFx);
-      L.circleMarker(c, {radius: 2, color: COLORS.measure, fillColor: COLORS.measure, fillOpacity: 1, interactive: false}).addTo(gFx);
+      const m = MEAS[e.point];
+      if (m.ring) { drawBuffer(m, e.d, gFx); continue; }
+      L.circle(m.ll, {radius: e.d * 1000, color: COLORS.measure, weight: 1.5, fill: false, interactive: false}).addTo(gFx);
+      L.circleMarker(m.ll, {radius: 2, color: COLORS.measure, fillColor: COLORS.measure, fillOpacity: 1, interactive: false}).addTo(gFx);
       continue;
     }
     L.circle(e.center, {radius: e.r * 1000, color: COLORS.radar, weight: 1.5, fill: false, interactive: false}).addTo(gFx);
@@ -462,7 +510,8 @@ function render(){
   if (pending && pending.type === 'measure') {
     const m = MEAS[pending.point];
     L.marker(m.ll, {icon: L.divIcon({className: '', iconSize: [30, 30], iconAnchor: [15, 15], html: `<div class="stad m"><i>${m.icon}</i><b>${m.label}</b></div>`}), interactive: false, keyboard: false}).addTo(gFx);
-    if (live) L.circle(m.ll, {radius: live.d * 1000, color: COLORS.measure, weight: 2.5, dashArray: '6 4', fill: false, interactive: false}).addTo(gFx);
+    if (live && m.ring) drawBuffer(m, live.d, gFx);
+    else if (live) L.circle(m.ll, {radius: live.d * 1000, color: COLORS.measure, weight: 2.5, dashArray: '6 4', fill: false, interactive: false}).addTo(gFx);
   }
   if (live && live.type === 'radar') {
     L.circle(live.center, {radius: live.r * 1000, color: COLORS.radar, weight: 2.5, dashArray: '6 4', fill: false, interactive: false}).addTo(gFx);
@@ -495,7 +544,7 @@ function renderList(){
     d.innerHTML = `<input type="checkbox" data-a="tog" ${e.on ? 'checked' : ''}><span>${name}<br><small>${sub} stations eliminated</small></span><button data-a="flip" title="Invert">⇄</button><button data-a="del" title="Delete">✕</button>`;
     d.onclick = ev => {
       const a = ev.target.dataset.a;
-      if (!a) { map.fitBounds(ms ? L.circle(MEAS[e.point].ll, {radius: e.d * 1000}).getBounds() : sd ? L.latLngBounds([STAD[STAD_I[e.stadium]].ll, ...ST.filter(s => s.stad === STAD_I[e.stadium]).map(s => s.ll)]) : zn ? L.latLngBounds(ST.filter(s => s.zone === e.zone).map(s => s.ll)) : ln ? L.latLngBounds(LINES[e.line]) : th ? L.latLngBounds([e.a, e.b]) : L.circle(e.center, {radius: e.r * 1000}).getBounds(), {padding: [60, 60], maxZoom: 17}); return; }
+      if (!a) { map.fitBounds(ms ? (MEAS[e.point].ring ? L.latLngBounds(MEAS[e.point].ring).pad(0.5) : L.circle(MEAS[e.point].ll, {radius: e.d * 1000}).getBounds()) : sd ? L.latLngBounds([STAD[STAD_I[e.stadium]].ll, ...ST.filter(s => s.stad === STAD_I[e.stadium]).map(s => s.ll)]) : zn ? L.latLngBounds(ST.filter(s => s.zone === e.zone).map(s => s.ll)) : ln ? L.latLngBounds(LINES[e.line]) : th ? L.latLngBounds([e.a, e.b]) : L.circle(e.center, {radius: e.r * 1000}).getBounds(), {padding: [60, 60], maxZoom: 17}); return; }
       if (a === 'tog') e.on = !e.on;
       if (a === 'flip') e.elim = flipOf[e.elim];
       if (a === 'del') { if (!confirm(`Delete ${name.replace(/^\S+ /, '')}?`)) return; effects = effects.filter(x => x !== e); }
@@ -567,7 +616,7 @@ function syncPlace(){
   const p = pending; if (!p) return;
   if (p.type === 'measure') {
     const m = MEAS[p.point];
-    $('placeH').innerHTML = (p.d ? `Distance <b>${p.d} km</b> to ${m.label}.` : `Enter your distance to ${m.label} in km, or use your location.`) + '<br>Hider closer: eliminate further. Hider further: eliminate closer.';
+    $('placeH').innerHTML = (p.d ? `Distance <b>${p.d} km</b> to ${m.label}.` : `Enter your distance to ${m.label}${m.ring ? ' (to the nearest point of the outline)' : ''} in km, or use your location.`) + '<br>Hider closer: eliminate further. Hider further: eliminate closer.';
     $('confirm').disabled = !p.d;
   } else if (p.type === 'stadium') {
     $('placeH').innerHTML = (p.stadium ? `Stadium <b>${p.stadium}</b> chosen. Its stations are ringed.` : 'Tap a stadium on the map, or use your location.') + '<br>Hider says same closest stadium: eliminate others. Different: eliminate these.';
@@ -677,7 +726,7 @@ $('useLoc').onclick = () => {
   const pick = () => {
     if (!pending) return;
     if (pending.type === 'stadium') pending.stadium = STAD.reduce((b, x) => me.ll.distanceTo(x.ll) < me.ll.distanceTo(b.ll) ? x : b).name;
-    else if (pending.type === 'measure') { pending.d = Math.max(0.01, +(me.ll.distanceTo(MEAS[pending.point].ll) / 1000).toFixed(2)); $('dist').value = pending.d; }
+    else if (pending.type === 'measure') { pending.d = Math.max(0.01, +(measDist(MEAS[pending.point], me.ll) / 1000).toFixed(2)); $('dist').value = pending.d; }
     else return;
     syncPlace(); render();
   };
