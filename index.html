@@ -299,8 +299,8 @@ const LOCATION_ZOOM = 15;                  // zoom level used when the location 
 const SHOW_ZONES_DEFAULT = false;          // are the fare zones drawn when the app opens? (also a switch in settings)
 const ZONE_FILL_OPACITY = 0.3;             // fare zone shading opacity
 const ZONE_DIM_OPACITY = 0.08;             // shading of the other zones while one is chosen for a matching question
-const ZONE_REACH_KM = 1.5;                 // how far from a station its zone shading extends
-const ZONE_LABEL_SPACING_KM = 4;           // zone numbers are repeated at least this far apart
+const ZONE_REACH_KM = 3;                 // how far from a station its zone shading extends
+const ZONE_LABEL_SPACING_KM = 10;           // zone numbers are repeated at least this far apart
 const LINE_DIM_OPACITY = 0.2;              // opacity of the other lines while one is chosen for a matching question             // thermometer line is green within this fraction of its chosen length
 
 for (const k of ['ink', 'go', 'panel', 'muted']) document.documentElement.style.setProperty('--' + k, COLORS[k]);
@@ -426,7 +426,7 @@ function drawZones(){
 }
 
 // ---- effects: each one decides, from a station's centre point only, whether that station survives ----
-// radar:  elim 'outside' | 'inside' (of the circle)
+// radar:  elim 'outside' | 'inside' (of the circle); a station goes only if its whole hiding area is on that side
 // thermo: elim 'start' | 'end' (stations closer to the start / end point are eliminated)
 // line:   elim 'off' | 'on' (stations not on / on the chosen train line are eliminated)
 // zone:   elim 'off' | 'on' (stations not in / in the chosen fare zone are eliminated)
@@ -435,17 +435,26 @@ function drawZones(){
 const thermoLen = e => L.latLng(e.a).distanceTo(e.b);
 const thermoOk = e => Math.abs(thermoLen(e) - e.r * 1000) <= e.r * 1000 * THERMO_TOLERANCE;
 const isLive = p => p && (p.type === 'radar' ? p.center : p.type === 'line' ? p.line : p.type === 'zone' ? p.zone : p.type === 'stadium' ? p.stadium : p.type === 'measure' ? p.d : p.a && p.b);
+// Radar, thermometer and measuring only eliminate a station when its whole hiding area (radius hideR) lies on the eliminated side.
+// Stations whose hiding area straddles the edge stay in play.
+const planar = ll => { ll = L.latLng(ll); return [ll.lng * MK * 111320, ll.lat * 111320]; };
+function thermoSide(s, e){   // metres from the halfway line, positive towards the end point
+  const [ax, ay] = planar(e.a), [bx, by] = planar(e.b), [px, py] = planar(s.ll), dx = bx - ax, dy = by - ay;
+  return ((px - (ax + bx) / 2) * dx + (py - (ay + by) / 2) * dy) / Math.hypot(dx, dy);
+}
+const keepCircle = (d, r, h, elim) => elim === 'outside' ? d <= r + h : d + h > r;   // d: centre distance, r: circle radius, h: hiding radius
 function passes(s, e){
-  if (e.type === 'measure') return (measDist(MEAS[e.point], s.ll) <= e.d * 1000) === (e.elim === 'outside');
+  const h = hideR * 1000;
+  if (e.type === 'measure') return keepCircle(measDist(MEAS[e.point], s.ll), e.d * 1000, h, e.elim);
   if (e.type === 'stadium') return (s.stad === STAD_I[e.stadium]) === (e.elim === 'off');
   if (e.type === 'zone') return (s.zone === e.zone) === (e.elim === 'off');
   if (e.type === 'line') return LINE_SET[e.line].has(s.i) === (e.elim === 'off');
   if (e.type === 'thermo') {
     if (thermoLen(e) < 1) return true;            // start and end on top of each other: no effect yet
-    const dA = s.ll.distanceTo(e.a), dB = s.ll.distanceTo(e.b);
-    return e.elim === 'start' ? dB < dA : dA < dB;
+    const t = thermoSide(s, e);
+    return e.elim === 'start' ? t > -h : t < h;
   }
-  return (s.ll.distanceTo(e.center) <= e.r * 1000) === (e.elim === 'outside');
+  return keepCircle(s.ll.distanceTo(e.center), e.r * 1000, h, e.elim);
 }
 function aliveList(extra){
   const fx = [...effects.filter(e => e.on), ...(extra ? [extra] : [])];
