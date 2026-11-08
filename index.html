@@ -594,15 +594,15 @@ const busy = () => !!pending;
 
 function setupMenu(btn, menu, list, type){
   $(menu).innerHTML = list.map(r => `<button data-r="${r}">${r} km</button>`).join('');
-  $(btn).onclick = () => { if (busy()) return; const o = $(menu).classList.contains('open'); closeMenus(); $(menu).classList.toggle('open', !o); };
+  $(btn).onclick = () => { const o = $(menu).classList.contains('open'); closeMenus(); $(menu).classList.toggle('open', !o); };
   $(menu).onclick = e => { const r = e.target.dataset.r; if (r) startPlace(type, +r); };
 }
 $('measureMenu').innerHTML = Object.values(MEAS).map(m => `<button data-m="${m.name}">${m.icon} ${m.label}</button>`).join('');
-$('measureBtn').onclick = () => { if (busy()) return; const o = $('measureMenu').classList.contains('open'); closeMenus(); $('measureMenu').classList.toggle('open', !o); };
+$('measureBtn').onclick = () => { const o = $('measureMenu').classList.contains('open'); closeMenus(); $('measureMenu').classList.toggle('open', !o); };
 $('measureMenu').onclick = e => { const n = e.target.dataset.m; if (n) startPlace('measure', n); };
 setupMenu('radarBtn', 'radarMenu', RADII, 'radar');
 setupMenu('thermoBtn', 'thermoMenu', THERMO_LENGTHS, 'thermo');
-$('matchBtn').onclick = () => { if (busy()) return; const o = $('matchMenu').classList.contains('open'); closeMenus(); $('matchMenu').classList.toggle('open', !o); };
+$('matchBtn').onclick = () => { const o = $('matchMenu').classList.contains('open'); closeMenus(); $('matchMenu').classList.toggle('open', !o); };
 $('matchMenu').onclick = e => { const m = e.target.dataset.m; if (m) startPlace(m); };
 $('showZones').checked = showZones;
 $('showZones').onchange = () => { showZones = $('showZones').checked; render(); };
@@ -623,7 +623,8 @@ const fmt = m => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(2) + ' km'
 function startPlace(type, r){
   const th = type === 'thermo', ln = type === 'line', zn = type === 'zone', sd = type === 'stadium', ms = type === 'measure';
   pending = ms ? {type, point: r, d: null, elim: 'outside'} : sd ? {type, stadium: null, elim: 'off'} : zn ? {type, zone: null, elim: 'off'} : ln ? {type, line: null, elim: 'off'} : th ? {type, r, a: null, b: null, elim: 'start'} : {type, r, center: null, elim: 'outside'};
-  gPins.clearLayers(); pins = {};
+  gPins.clearLayers(); pins = {}; locAction = null;
+  ['radarBtn', 'thermoBtn', 'matchBtn', 'measureBtn'].forEach(b => $(b).classList.remove('on'));   // switching from another question in progress
   $('elim').innerHTML = ms
     ? '<button data-v="outside">Eliminate further</button><button data-v="inside">Eliminate closer</button>'
     : sd
@@ -691,7 +692,8 @@ function endPlace(){
   $('lineSel').classList.remove('open'); $('locRow').style.display = 'none'; $('distRow').classList.remove('open'); ['radarBtn', 'thermoBtn', 'matchBtn', 'measureBtn'].forEach(b => $(b).classList.remove('on')); map.getContainer().style.cursor = ''; render();
 }
 map.on('click', e => {
-  if (!pending) { closeMenus(); return; }
+  closeMenus();
+  if (!pending) return;
   if (pending.type === 'line') return;
   if (pending.type === 'stadium' || pending.type === 'measure') return;
   if (pending.type === 'zone') { const z = zoneAt(e.latlng); if (z) { pending.zone = z; syncPlace(); render(); } return; }
