@@ -14,7 +14,7 @@
   .btn.on{background:var(--ink);color:#fff}
   .btn.go{background:var(--go);color:#fff}
   .btn:disabled{opacity:.4}
-  .menu{position:absolute;top:48px;left:0;background:var(--panel);border-radius:10px;box-shadow:0 2px 8px #0003;padding:4px;display:none;min-width:130px}
+  .menu{position:absolute;z-index:20;top:48px;left:0;background:var(--panel);border-radius:10px;box-shadow:0 2px 8px #0003;padding:4px;display:none;min-width:130px}
   .menu.open{display:block}
   .menu button{display:block;width:100%;text-align:left;font:inherit;font-size:15px;padding:10px 12px;border:0;background:none;border-radius:8px}
   .menu button:active{background:#0001}
@@ -78,7 +78,7 @@
   <label class="dist" id="distRow">Your distance <input id="dist" type="text" inputmode="decimal" placeholder="0.0" autocomplete="off"> km</label>
   <div class="chips" id="lineSel"></div>
   <div class="seg" id="elim"></div>
-  <div class="acts"><button class="btn" id="cancel">Cancel</button><button class="btn go" id="confirm" disabled>Confirm</button></div>
+  <div class="acts"><button class="btn" id="cancel">Cancel</button><button class="btn" id="copyQ" disabled>📋 Copy</button><button class="btn go" id="confirm" disabled>Confirm</button></div>
 </div>
 
 <div id="fx" class="ui sheet">
@@ -236,9 +236,9 @@ Vanløse Idrætspark|55.68630|12.47690
 `;
 // name|lat|lng, from Jet Lag - Measuring - Points.csv
 const MEASURE_DATA = `
-Opera|55.68217|12.60007
-Zoo|55.67169|12.52344
-Grundtvigs Church|55.71662|12.53402
+Opera|55.682355|12.599634
+Zoo|55.671506|12.523343
+Grundtvigs Church|55.716591|12.533137
 `;
 // lat|lng outline of the lakes, from Jet Lag - Measuring - Lakes.csv (not closed: the app joins the last point back to the first)
 const LAKES_DATA = `
@@ -550,10 +550,11 @@ function renderList(){
     const zn = e.type === 'zone', sd = e.type === 'stadium', ms = e.type === 'measure';
     const name = ms ? `${MEAS[e.point].icon} Measuring: ${MEAS[e.point].label} ${e.d} km` : sd ? `⚽ Football: ${e.stadium}` : zn ? `🎫 Fare zone ${e.zone}` : ln ? `🚆 Train line ${e.line}` : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${e.r} km`;
     const sub = ms ? (e.elim === 'outside' ? 'Further' : 'Closer') : sd ? (e.elim === 'off' ? "Other stadiums'" : "This stadium's") : zn ? (e.elim === 'off' ? 'Off-zone' : 'In-zone') : ln ? (e.elim === 'off' ? 'Off-line' : 'On-line') : th ? (e.elim === 'start' ? 'Start side' : 'End side') : (e.elim === 'outside' ? 'Outside' : 'Inside');
-    d.innerHTML = `<input type="checkbox" data-a="tog" ${e.on ? 'checked' : ''}><span>${name}<br><small>${sub} stations eliminated</small></span><button data-a="flip" title="Invert">⇄</button><button data-a="del" title="Delete">✕</button>`;
+    d.innerHTML = `<input type="checkbox" data-a="tog" ${e.on ? 'checked' : ''}><span>${name}<br><small>${sub} stations eliminated</small></span><button data-a="copy" title="Copy question">📋</button><button data-a="flip" title="Invert">⇄</button><button data-a="del" title="Delete">✕</button>`;
     d.onclick = ev => {
       const a = ev.target.dataset.a;
       if (!a) { map.fitBounds(ms ? (MEAS[e.point].ring ? L.latLngBounds(MEAS[e.point].ring).pad(0.5) : L.circle(MEAS[e.point].ll, {radius: e.d * 1000}).getBounds()) : sd ? L.latLngBounds([STAD[STAD_I[e.stadium]].ll, ...ST.filter(s => s.stad === STAD_I[e.stadium]).map(s => s.ll)]) : zn ? L.latLngBounds(ST.filter(s => s.zone === e.zone).map(s => s.ll)) : ln ? L.latLngBounds(LINES[e.line]) : th ? L.latLngBounds([e.a, e.b]) : L.circle(e.center, {radius: e.r * 1000}).getBounds(), {padding: [60, 60], maxZoom: 17}); return; }
+      if (a === 'copy') { copyQuestion(e); return; }
       if (a === 'tog') e.on = !e.on;
       if (a === 'flip') e.elim = flipOf[e.elim];
       if (a === 'del') { if (!confirm(`Delete ${name.replace(/^\S+ /, '')}?`)) return; effects = effects.filter(x => x !== e); }
@@ -562,6 +563,28 @@ function renderList(){
     $('list').appendChild(d);
   }
 }
+
+// ---- questions to send to the hider (copied to the clipboard) ----
+const kmText = n => `${n} ${n === 1 ? 'kilometer' : 'kilometers'}`;
+const coordText = x => { const p = L.latLng(x); return `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`; };
+const mapLink = x => { const p = L.latLng(x); return `https://www.google.com/maps?q=${p.lat.toFixed(5)},${p.lng.toFixed(5)}`; };   // opens the maps app when tapped
+function questionText(e){
+  if (e.type === 'radar') return `Are you within ${kmText(e.r)} of ${coordText(e.center)}?\n${mapLink(e.center)}`;
+  if (e.type === 'thermo') return `Am I hotter or colder?\nStart: ${coordText(e.a)}\n${mapLink(e.a)}\nEnd: ${coordText(e.b)}\n${mapLink(e.b)}`;
+  if (e.type === 'zone') return `Are you in fare zone ${e.zone}?`;
+  if (e.type === 'line') return `Are you on the ${e.line}?`;
+  if (e.type === 'stadium') return `Is your closest football stadium ${e.stadium}?`;
+  const m = MEAS[e.point];   // single-point landmarks also get their coordinates and a map link; the lakes (an outline) don't
+  return `Are you closer than ${kmText(e.d)} to the ${m.label}?` + (m.ring ? '' : `\n${coordText(m.ll)}\n${mapLink(m.ll)}`);
+}
+async function copyText(t){
+  try { await navigator.clipboard.writeText(t); return true; } catch(e) {}
+  try {   // fallback for browsers without the clipboard API
+    const a = document.createElement('textarea'); a.value = t; a.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(a); a.select();
+    const ok = document.execCommand('copy'); a.remove(); return ok;
+  } catch(e) { return false; }
+}
+function copyQuestion(e){ copyText(questionText(e)).then(ok => toast(ok ? 'Question copied to clipboard' : 'Could not copy. Your browser blocked the clipboard.')); }
 
 // ---- sheets & menus ----
 const sheets = ['place', 'fx', 'cfgP'];
@@ -615,13 +638,14 @@ function startPlace(type, r){
   $('lineSel').classList.toggle('open', ln);
   if (ln) $('lineSel').innerHTML = Object.keys(LINES).map(id => `<button class="chip" data-l="${id}"><i style="background:${COLORS.lines[id]}"></i>${id}</button>`).join('');
   openSheet('place'); setElim(pending.elim);
-  $('locRow').style.display = sd || ms ? '' : 'none'; $('distRow').classList.toggle('open', ms); $('dist').value = '';
+  $('locRow').style.display = sd || ms || type === 'radar' ? '' : 'none'; $('distRow').classList.toggle('open', ms); $('dist').value = '';
   $('placeT').textContent = ms ? `📏 Measuring: ${MEAS[r].label}` : sd ? '⚽ Matching: football' : zn ? '🎫 Matching: fare zone' : ln ? '🚆 Matching: train line' : `${th ? '🌡️ Thermometer' : '📡 Radar'} ${r} km`;
   $(ms ? 'measureBtn' : ln || zn || sd ? 'matchBtn' : th ? 'thermoBtn' : 'radarBtn').classList.add('on'); map.getContainer().style.cursor = ln || sd || ms ? '' : 'crosshair';
   render();
   syncPlace();
 }
-function syncPlace(){
+function syncPlace(){ syncPlace0(); $('copyQ').disabled = $('confirm').disabled; }
+function syncPlace0(){
   const p = pending; if (!p) return;
   if (p.type === 'measure') {
     const m = MEAS[p.point];
@@ -637,7 +661,7 @@ function syncPlace(){
     $('placeH').innerHTML = (p.line ? `Line <b>${p.line}</b> chosen.` : 'Choose a train line.') + '<br>Hider says same line: eliminate off-line. Different line: eliminate on-line.';
     $('confirm').disabled = !p.line;
   } else if (p.type === 'radar') {
-    $('placeH').textContent = 'Tap the map to place the radar centre. Tap again to move it.';
+    $('placeH').textContent = 'Tap the map to place the radar centre, or use your location. Tap again to move it.';
     $('confirm').disabled = !p.center;
   } else {
     if (!p.a) $('placeH').textContent = 'Tap the map to place the start point.';
@@ -678,6 +702,7 @@ map.on('click', e => {
   syncPlace(); render();
 });
 $('cancel').onclick = endPlace;
+$('copyQ').onclick = () => { if (pending && !$('copyQ').disabled) copyQuestion(pending); };
 $('confirm').onclick = () => {
   const p = pending; if (!p || $('confirm').disabled) return;
   const ll = x => [x.lat, x.lng];
@@ -735,6 +760,7 @@ $('useLoc').onclick = () => {
   const pick = () => {
     if (!pending) return;
     if (pending.type === 'stadium') pending.stadium = STAD.reduce((b, x) => me.ll.distanceTo(x.ll) < me.ll.distanceTo(b.ll) ? x : b).name;
+    else if (pending.type === 'radar') pending.center = me.ll;
     else if (pending.type === 'measure') { pending.d = Math.max(0.01, +(measDist(MEAS[pending.point], me.ll) / 1000).toFixed(2)); $('dist').value = pending.d; }
     else return;
     syncPlace(); render();
